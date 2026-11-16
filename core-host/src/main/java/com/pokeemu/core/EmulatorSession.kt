@@ -37,6 +37,11 @@ class EmulatorSession private constructor() {
     fun flushSave(): Boolean = NativeBridge.nativeFlushSave()
     fun readMemory(region: MemoryRegion, offset: Long, length: Int): ByteArray? =
         NativeBridge.nativeReadMemory(region.id, offset, length)
+    /**
+     * Reads console memory by bus address, e.g. [GBA_EWRAM] (256 KiB). Returns null
+     * when the address isn't mapped. Safe to call while the game runs.
+     */
+    fun readBus(address: Long, length: Int): ByteArray? = NativeBridge.nativeReadBus(address, length)
     val fps: Double get() = NativeBridge.nativeFps()
 
     /** Current frame as a Bitmap (for save-state thumbnails), or null. */
@@ -58,6 +63,8 @@ class EmulatorSession private constructor() {
 
     companion object {
         const val GBA_CORE = "libmgba_libretro.so"
+        const val GBA_EWRAM = 0x02000000L
+        const val GBA_EWRAM_SIZE = 0x40000
 
         @Volatile var active: EmulatorSession? = null
             private set

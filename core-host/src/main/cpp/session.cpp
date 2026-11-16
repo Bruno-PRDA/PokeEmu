@@ -218,6 +218,15 @@ std::vector<uint8_t> Session::readMemory(unsigned region, size_t offset, size_t 
     return std::vector<uint8_t>(data + offset, data + offset + length);
 }
 
+std::vector<uint8_t> Session::readBus(uint32_t address, size_t length) {
+    std::lock_guard<std::mutex> lock(coreMutex_);  // consistent snapshot between frames
+    size_t available = 0;
+    uint8_t* p = core_.busAddress(address, &available);
+    if (!p) return {};
+    length = std::min(length, available);
+    return std::vector<uint8_t>(p, p + length);
+}
+
 // ---- core callbacks (emulation thread) --------------------------------------
 
 void Session::onVideo(const void* data, unsigned w, unsigned h, size_t pitch, retro_pixel_format fmt) {

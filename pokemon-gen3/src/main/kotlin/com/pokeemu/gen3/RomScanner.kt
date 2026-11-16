@@ -15,14 +15,39 @@ class RomScanner(private val rom: ByteArray) {
     private val report = mutableListOf<String>()
 
     fun scan(): RomData {
-        val species = names("species names", listOf("BULBASAUR", "IVYSAUR", "VENUSAUR"), firstIndex = 1, maxLen = 12, max = 2048)
-        val moves = names("move names", listOf("POUND", "KARATE CHOP", "DOUBLESLAP"), firstIndex = 1, maxLen = 16, max = 1024,
-            altAnchors = listOf("POUND", "KARATE CHOP", "DOUBLE SLAP"))
-        val abilities = names("ability names", listOf("STENCH", "DRIZZLE", "SPEED BOOST"), firstIndex = 1, maxLen = 16, max = 512)
-        val items = names("item names", listOf("MASTER BALL", "ULTRA BALL", "GREAT BALL"), firstIndex = 1, maxLen = 20, max = 2048)
+        val tables = listOf(
+            names("species names", listOf("BULBASAUR", "IVYSAUR", "VENUSAUR"), firstIndex = 1, maxLen = 12, max = 2048),
+            names("move names", listOf("POUND", "KARATE CHOP", "DOUBLESLAP"), firstIndex = 1, maxLen = 16, max = 1024,
+                altAnchors = listOf("POUND", "KARATE CHOP", "DOUBLE SLAP")),
+            names("ability names", listOf("STENCH", "DRIZZLE", "SPEED BOOST"), firstIndex = 1, maxLen = 16, max = 512),
+            names("item names", listOf("MASTER BALL", "ULTRA BALL", "GREAT BALL"), firstIndex = 1, maxLen = 20, max = 2048),
+        ).map(::trimAtNextTable)
+        tables.forEach { report += it.description() }
+        val (species, moves, abilities, items) = tables.map { it.names }
         val base = baseStats(species.size.coerceAtLeast(412))
         val pp = movePp(moves.size.coerceAtLeast(355))
         return RomData(species, moves, abilities, items, base, pp, report.toList())
+    }
+
+    private class NameTable(val what: String, val table: Table?, val names: List<String>) {
+        fun description() = if (table == null) "Could not find $what — showing numbers instead"
+        else "Found $what: ${names.size} entries (${if (table.pointers) "pointer" else "inline"} table, " +
+            "entry size ${table.stride}, at 0x%06X)".format(table.base)
+    }
+
+    private val foundTables = mutableListOf<Table>()
+
+    /**
+     * Inline tables are often packed back to back (vanilla move names start right
+     * after species names), and the next table's text also looks like valid
+     * entries. End each inline table where another found table begins.
+     */
+    private fun trimAtNextTable(t: NameTable): NameTable {
+        val table = t.table ?: return t
+        if (table.pointers) return t
+        val end = table.base + t.names.size * table.stride
+        val next = foundTables.map { it.base }.filter { it > table.base && it < end }.minOrNull() ?: return t
+        return NameTable(t.what, table, t.names.take((next - table.base) / table.stride))
     }
 
     // ---- name tables ------------------------------------------------------------------
@@ -32,19 +57,17 @@ class RomScanner(private val rom: ByteArray) {
     private fun names(
         what: String, anchors: List<String>, firstIndex: Int, maxLen: Int, max: Int,
         altAnchors: List<String>? = null,
-    ): List<String> {
+    ): NameTable {
         val variants = listOfNotNull(anchors, altAnchors).flatMap { listOf(it, it.map(::titleCase)) }.distinct()
         for (v in variants) {
             val table = findInline(v, firstIndex) ?: findPointers(v, firstIndex) ?: continue
             val names = readNames(table, maxLen, max)
             if (names.size > firstIndex + 2) {
-                report += "Found $what: ${names.size} entries (${if (table.pointers) "pointer" else "inline"} table, " +
-                    "entry size ${table.stride}, at 0x%06X)".format(table.base)
-                return names
+                foundTables += table
+                return NameTable(what, table, names)
             }
         }
-        report += "Could not find $what — showing numbers instead"
-        return emptyList()
+        return NameTable(what, null, emptyList())
     }
 
     private fun titleCase(s: String) = s.lowercase().split(' ').joinToString(" ") { w -> w.replaceFirstChar { it.uppercase() } }

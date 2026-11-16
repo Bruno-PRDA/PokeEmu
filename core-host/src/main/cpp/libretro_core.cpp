@@ -146,6 +146,19 @@ uint8_t* LibretroCore::memoryData(unsigned region, size_t* size) {
     return static_cast<uint8_t*>(retro_get_memory_data_(region));
 }
 
+uint8_t* LibretroCore::busAddress(uint32_t address, size_t* available) {
+    *available = 0;
+    if (!gameLoaded_) return nullptr;
+    for (const auto& r : memoryMap_) {
+        if (address >= r.start && address - r.start < r.len) {
+            const size_t rel = address - r.start;
+            *available = r.len - rel;
+            return r.ptr + r.offset + rel;
+        }
+    }
+    return nullptr;
+}
+
 // ---- static callbacks -------------------------------------------------------
 
 bool LibretroCore::environment(unsigned cmd, void* data) {
@@ -178,7 +191,16 @@ bool LibretroCore::environment(unsigned cmd, void* data) {
             return true;
         case RETRO_ENVIRONMENT_GET_INPUT_BITMASKS:
             return true;
-        case RETRO_ENVIRONMENT_SET_MEMORY_MAPS:
+        case RETRO_ENVIRONMENT_SET_MEMORY_MAPS: {
+            const auto* map = static_cast<const retro_memory_map*>(data);
+            self->memoryMap_.clear();
+            for (unsigned i = 0; i < map->num_descriptors; ++i) {
+                const retro_memory_descriptor& d = map->descriptors[i];
+                if (!d.ptr || d.len == 0) continue;
+                self->memoryMap_.push_back({static_cast<uint8_t*>(d.ptr), d.offset, static_cast<uint32_t>(d.start), d.len});
+            }
+            return true;
+        }
         case RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS:
         case RETRO_ENVIRONMENT_SET_CONTROLLER_INFO:
         case RETRO_ENVIRONMENT_SET_SUPPORT_ACHIEVEMENTS:

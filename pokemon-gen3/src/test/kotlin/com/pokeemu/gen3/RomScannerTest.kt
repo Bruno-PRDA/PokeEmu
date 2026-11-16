@@ -163,6 +163,18 @@ class RomScannerTest {
         assertTrue(data.report.any { "vanilla layout" in it })
     }
 
+    /** Vanilla FireRed: the move-name table starts right after the last species name. */
+    @Test fun backToBackTablesDontBleedIntoEachOther() {
+        val rom = FakeRom()
+        val base = rom.alloc(SPECIES.size * 11 + MOVES.size * 13)
+        SPECIES.forEachIndexed { i, n -> rom.text(n, base + i * 11, 11) }
+        val movesAt = base + SPECIES.size * 11
+        MOVES.forEachIndexed { i, n -> rom.text(n, movesAt + i * 13, 13) }
+        val data = RomScanner(rom.bytes).scan()
+        assertEquals(SPECIES, data.speciesNames)
+        assertEquals(MOVES, data.moveNames.take(MOVES.size))
+    }
+
     @Test fun nothingFoundInNoise() {
         val data = RomScanner(FakeRom(0x20000).bytes).scan()
         assertTrue(data.speciesNames.isEmpty())

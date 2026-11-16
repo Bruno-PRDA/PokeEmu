@@ -115,4 +115,10 @@ JNI_FN(jbyteArray, nativeReadMemory)(JNIEnv* env, jobject, jint region, jlong of
     return bytes.empty() ? nullptr : toJava(env, bytes);
 }
 
+JNI_FN(jbyteArray, nativeReadBus)(JNIEnv* env, jobject, jlong address, jint length) {
+    if (!gSession || address < 0 || length <= 0) return nullptr;
+    auto bytes = gSession->readBus(static_cast<uint32_t>(address), static_cast<size_t>(length));
+    return bytes.empty() ? nullptr : toJava(env, bytes);
+}
+
 JNI_FN(jdouble, nativeFps)(JNIEnv*, jobject) { return gSession ? gSession->fps() : 0.0; }

@@ -23,5 +23,6 @@ internal object NativeBridge {
     external fun nativeFlushSave(): Boolean
     external fun nativeSnapshot(): IntArray?
     external fun nativeReadMemory(region: Int, offset: Long, length: Int): ByteArray?
+    external fun nativeReadBus(address: Long, length: Int): ByteArray?
     external fun nativeFps(): Double
 }

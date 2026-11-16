@@ -36,6 +36,8 @@ public:
     // Writes save RAM to disk if it changed since the last flush. Returns false on I/O error.
     bool flushSaveRam(bool force = false);
     std::vector<uint8_t> readMemory(unsigned region, size_t offset, size_t length);
+    // Reads console memory by bus address (e.g. 0x02000000 = GBA EWRAM).
+    std::vector<uint8_t> readBus(uint32_t address, size_t length);
     double fps() const { return core_.avInfo().timing.fps; }
 
 private:

@@ -41,6 +41,9 @@ public:
 
     // Region is a RETRO_MEMORY_* id. Returns nullptr when unavailable.
     uint8_t* memoryData(unsigned region, size_t* size);
+    // Host pointer for a console bus address (from the core's memory map), with
+    // the bytes available from there in *available. nullptr if unmapped.
+    uint8_t* busAddress(uint32_t address, size_t* available);
 
 private:
     template <typename T> bool sym(T& fn, const char* name);
@@ -61,6 +64,14 @@ private:
     std::string saveDir_;
     Callbacks callbacks_;
     retro_pixel_format pixelFormat_ = RETRO_PIXEL_FORMAT_0RGB1555;
+
+    struct MemoryRegion {
+        uint8_t* ptr;
+        size_t offset;
+        uint32_t start;
+        size_t len;
+    };
+    std::vector<MemoryRegion> memoryMap_;
 
     void (*retro_init_)() = nullptr;
     void (*retro_deinit_)() = nullptr;

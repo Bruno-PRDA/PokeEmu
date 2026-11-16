@@ -31,6 +31,16 @@ import com.pokeemu.core.EmulatorSession
 import com.pokeemu.saves.GameStorage
 import com.pokeemu.saves.SaveManager
 import com.pokeemu.saves.romId
+import com.pokeemu.saves.RomHeader
+import com.pokeemu.gen3.Gen3Game
+import com.pokeemu.gen3.Gen3Save
+import com.pokeemu.gen3.LiveReader
+import com.pokeemu.gen3.LiveState
+import com.pokeemu.gen3.RomData
+import com.pokeemu.app.ui.OverlayPanel
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -50,6 +60,13 @@ class PlayerActivity : ComponentActivity() {
     private var fastForward by mutableStateOf(false)
     private var ffSpeed by mutableStateOf(3)
     private var stateSlots by mutableStateOf<List<GameStorage.StateSlot>>(emptyList())
+
+    // Battle overlay
+    private var overlayOpen by mutableStateOf(false)
+    private var liveState by mutableStateOf<LiveState?>(null)
+    private var romData by mutableStateOf<RomData?>(null)
+    private var liveReader: LiveReader? = null
+    private var overlayJob: Job? = null
 
     private var touchButtons = 0
     private var padButtons = 0
@@ -80,6 +97,9 @@ class PlayerActivity : ComponentActivity() {
                     fastForward = fastForward,
                     onToggleFastForward = ::toggleFastForward,
                     onOpenMenu = { showDialog(Dialog.MENU) },
+                    overlayOpen = overlayOpen,
+                    onToggleOverlay = ::toggleOverlay,
+                    overlay = { mod -> OverlayPanel(liveState, romData, mod) },
                 )
                 when (dialog) {
                     Dialog.MENU -> PauseMenu(
@@ -128,8 +148,56 @@ class PlayerActivity : ComponentActivity() {
             session!!.start()
             ready = true
             if (storage.readState(id, GameStorage.AUTO_SLOT) != null) showDialog(Dialog.RESUME_PROMPT)
+            prepareOverlay(id, rom)
         } catch (e: Exception) {
             error = "Could not start the game:\n${e.message}"
+        }
+    }
+
+    // ---- battle overlay -----------------------------------------------------
+
+    /** Loads game data (cached ROM scan) and the player's trainer ID for the RAM reader. */
+    private fun prepareOverlay(id: String, rom: ByteArray) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            val store = RomDataStore(storage)
+            val data = store.cached(id) ?: runCatching { store.scanAndCache(id, rom) }.getOrNull()
+            val save = runCatching { Gen3Save.parse(storage.saveFile(id).readBytes()) }.getOrNull()
+            val code = RomHeader.parse(rom)?.gameCode.orEmpty()
+            val game = save?.game ?: when {
+                code.startsWith("BPR") || code.startsWith("BPG") -> Gen3Game.FIRERED_LEAFGREEN
+                code.startsWith("BPE") -> Gen3Game.EMERALD
+                code.startsWith("AXV") || code.startsWith("AXP") -> Gen3Game.RUBY_SAPPHIRE
+                else -> Gen3Game.FIRERED_LEAFGREEN
+            }
+            val otId = save?.trainer?.let { (it.secretId.toLong() shl 16) or it.trainerId.toLong() }
+            withContext(Dispatchers.Main) {
+                romData = data
+                liveReader = LiveReader(
+                    playerOtId = otId,
+                    game = game,
+                    encoding = save?.pkEncoding,
+                    speciesCount = data?.speciesNames?.size?.takeIf { it > 0 } ?: 2048,
+                    moveCount = data?.moveNames?.size?.takeIf { it > 0 } ?: 1024,
+                )
+            }
+        }
+    }
+
+    private fun toggleOverlay() {
+        overlayOpen = !overlayOpen
+        overlayJob?.cancel()
+        if (!overlayOpen) return
+        overlayJob = lifecycleScope.launch {
+            while (isActive) {
+                val s = session
+                val reader = liveReader
+                if (s != null && reader != null) {
+                    liveState = withContext(Dispatchers.Default) {
+                        s.readBus(EmulatorSession.GBA_EWRAM, EmulatorSession.GBA_EWRAM_SIZE)?.let(reader::read)
+                    }
+                }
+                delay(OVERLAY_REFRESH_MS)
+            }
         }
     }
 
@@ -153,6 +221,7 @@ class PlayerActivity : ComponentActivity() {
     override fun onDestroy() {
         super.onDestroy()
         val s = session ?: return
+        overlayJob?.cancel()
         if (isFinishing) {
             // Remember exactly where the player was, then write the in-game save and unload.
             writeState(GameStorage.AUTO_SLOT)
@@ -251,6 +320,7 @@ class PlayerActivity : ComponentActivity() {
 
     companion object {
         private const val EXTRA_URI = "uri"
+        private const val OVERLAY_REFRESH_MS = 500L
         private const val EXTRA_NAME = "name"
 
         fun intent(context: Context, uri: Uri, name: String) =

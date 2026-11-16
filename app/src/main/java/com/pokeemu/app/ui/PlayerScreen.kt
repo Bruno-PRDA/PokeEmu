@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -23,6 +24,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.QueryStats
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
@@ -75,12 +77,18 @@ fun PlayerScreen(
     fastForward: Boolean,
     onToggleFastForward: () -> Unit,
     onOpenMenu: () -> Unit,
+    overlayOpen: Boolean,
+    onToggleOverlay: () -> Unit,
+    overlay: @Composable (Modifier) -> Unit,
 ) {
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val toolButtons = @Composable {
         IconButton(onClick = onToggleFastForward, colors = IconButtonDefaults.iconButtonColors(
             contentColor = if (fastForward) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.6f),
         )) { Icon(Icons.Default.FastForward, "Fast-forward") }
+        IconButton(onClick = onToggleOverlay, colors = IconButtonDefaults.iconButtonColors(
+            contentColor = if (overlayOpen) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.6f),
+        )) { Icon(Icons.Default.QueryStats, "Battle info") }
         IconButton(onClick = onOpenMenu) { Icon(Icons.Default.Menu, "Menu", tint = Color.White.copy(alpha = 0.6f)) }
     }
 
@@ -89,12 +97,14 @@ fun PlayerScreen(
             GameSurface(onSurface, Modifier.align(Alignment.Center).fillMaxHeight())
             Gamepad(PadLayouts.landscape, opacity = 0.8f, onButtons = onButtons)
             Row(Modifier.align(Alignment.TopCenter)) { toolButtons() }
+            if (overlayOpen) overlay(Modifier.align(Alignment.TopCenter).padding(top = 48.dp).width(360.dp).heightIn(max = 280.dp))
         } else {
             Column(Modifier.fillMaxSize()) {
                 Box(Modifier.fillMaxWidth()) {
                     GameSurface(onSurface, Modifier.fillMaxWidth())
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) { toolButtons() }
+                if (overlayOpen) overlay(Modifier.fillMaxWidth().padding(horizontal = 8.dp).heightIn(max = 260.dp))
                 Box(Modifier.fillMaxWidth().weight(1f)) {
                     Gamepad(PadLayouts.portrait, opacity = 1f, onButtons = onButtons)
                 }
