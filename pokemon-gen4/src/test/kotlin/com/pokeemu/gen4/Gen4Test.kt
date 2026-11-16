@@ -22,12 +22,13 @@ class Gen4Test {
         assertEquals(0xE97E, lcg.next())
     }
 
-    private fun plainMon(pid: Long, species: Int, nickname: String, party: Boolean): ByteArray {
+    internal fun plainMon(pid: Long, species: Int, nickname: String, party: Boolean, ability: Int = 0): ByteArray {
         val b = ByteArray(if (party) Pk4.PARTY_SIZE else Pk4.BOX_SIZE)
         b.put32(0, pid)
         b.put16(0x08, species); b.put16(0x0A, 0)
         b.put16(0x0C, 12345); b.put16(0x0E, 54321)
         b.put32(0x10, 125)
+        b[0x15] = ability.toByte()
         b.put16(0x28, 33) // Tackle
         b.put32(0x38, 31L or (31L shl 5) or (1L shl 31)) // HP/Atk 31, nicknamed
         Gen4Text.encode(nickname, 11).copyInto(b, 0x48)
@@ -65,7 +66,7 @@ class Gen4Test {
     }
 
     /** Builds a save with valid footers for [layout], partition [newer] having the higher counter. */
-    private fun buildSave(
+    internal fun buildSave(
         layout: Gen4Layout, party: List<ByteArray>, boxMon: ByteArray?, newer: Int = 1,
         fullFooter: Boolean = false, counterBase: Long = 9,
     ): ByteArray {
@@ -165,6 +166,21 @@ class Gen4Test {
             println("   names with unknown characters: $unknown")
             println("   494..500: ${(494..500).map(data::species)} 650..652: ${(650..652).map(data::species)} 900..912: ${(900..912).map(data::species)}")
             assertEquals("bulbasaur", data.species(1).lowercase())
+            data.report.forEach { println("   report: $it") }
+            for (name in listOf("Charmander", "Clefairy", "Shedinja", "Sylveon", "Eternatus")) {
+                val id = data.speciesNames.indexOfFirst { it.equals(name, true) }
+                val b = data.base(id)
+                println("   $name #$id: ${b?.stats} ${b?.let { data.typeName(it.type1) + "/" + data.typeName(it.type2) }} ab=${b?.let { data.abilityName(it.ability1) + "/" + data.abilityName(it.ability2) }} g=${b?.genderRatio} growth=${b?.growthRate}")
+            }
+            FileRomSource(f).use { src ->
+                val fs = NdsFileSystem(src)
+                for (path in listOf("a/0/1/1")) fs.read(path)?.let { b ->
+                    val n = Narc.parse(b)
+                    println("   $path: ${n.size} entries, #1=${n[1].joinToString(" ") { "%02x".format(it) }}, #500 size=${if (n.size > 500) n[500].size else -1}")
+                }
+                println("   files: ${fs.paths.size}, dirs a/0/1/*: ${fs.paths.keys.filter { it.startsWith("a/0/1/") }.sorted()}")
+            }
+            println("   items 1..4: ${(1..4).map(data::itemName)}; pp Pound=${data.basePp(1)} Tackle=${data.basePp(33)}; personal entries=${data.baseStats.size}")
         }
     }
 
@@ -175,7 +191,7 @@ class Gen4Test {
             val save = Gen4Save.parse(f.readBytes())
             println("${f.name}: ${save.game.label} ${save.trainer} fallback=${save.usedFallback}")
             for (pk in save.party) {
-                println("   #${pk.species} ${pk.nickname} Lv${pk.level} ${Pk4.NATURES[pk.nature]} ivs=${pk.ivs} moves=${pk.moves} ok=${pk.checksumValid}")
+                println("   #${pk.species} ${pk.nickname} Lv${pk.level} ${Pk4.NATURES[pk.nature]} ivs=${pk.ivs} moves=${pk.moves} ability=${pk.ability} shiny=${pk.isShiny} nicknamed=${pk.isNicknamed} stats=${pk.partyStats} hp=${pk.currentHp} ok=${pk.checksumValid}")
                 assertTrue(pk.checksumValid)
                 assertContentEquals(pk.toBytes(), Pk4(pk.toBytes()).toBytes())
             }

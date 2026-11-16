@@ -1,5 +1,8 @@
 package com.pokeemu.gen4
 
+import com.pokeemu.core.GameData
+import com.pokeemu.core.Mon
+
 /**
  * One Gen 4 Pokémon: 136 bytes in the PC, 236 in the party.
  *
@@ -8,34 +11,35 @@ package com.pokeemu.gen4
  * ((pid >> 13) & 31) % 24 and XOR-encrypted with the Gen 4 LCG seeded by the
  * checksum. The party-only area 0x88..0xEB is encrypted with the LCG seeded
  * by the personality value. Decode → encode is byte-identical.
+ *
+ * Fields are edited on the decrypted copy; [toBytes] re-shuffles and
+ * re-encrypts with the current personality value and checksum.
  */
-class Pk4(raw: ByteArray) {
+class Pk4(raw: ByteArray) : Mon {
     init {
         require(raw.size == BOX_SIZE || raw.size == PARTY_SIZE) { "Pk4 must be 136 or 236 bytes, got ${raw.size}" }
     }
 
-    private val bytes = raw.copyOf()
-    /** Decrypted record in canonical A-B-C-D order (same offsets as [bytes]). */
+    /** Decrypted record in canonical A-B-C-D order. */
     private val plain = ByteArray(raw.size)
 
-    val isParty get() = bytes.size == PARTY_SIZE
-    val checksumValid: Boolean
+    val isParty get() = plain.size == PARTY_SIZE
+    override val checksumValid: Boolean
 
     init {
-        bytes.copyInto(plain, 0, 0, 8)
-        val lcg = Lcg(bytes.u16(6).toLong())
+        raw.copyInto(plain, 0, 0, 8)
+        val lcg = Lcg(raw.u16(6).toLong())
         val shuffled = ByteArray(128)
-        for (w in 0 until 64) shuffled.put16(w * 2, bytes.u16(8 + w * 2) xor lcg.next())
+        for (w in 0 until 64) shuffled.put16(w * 2, raw.u16(8 + w * 2) xor lcg.next())
         val order = ORDERS[shuffleValue()]
         for (pos in 0 until 4) shuffled.copyInto(plain, 8 + order[pos] * 32, pos * 32, pos * 32 + 32)
         if (isParty) {
             val partyLcg = Lcg(personality)
-            for (w in 0 until 50) plain.put16(0x88 + w * 2, bytes.u16(0x88 + w * 2) xor partyLcg.next())
+            for (w in 0 until 50) plain.put16(0x88 + w * 2, raw.u16(0x88 + w * 2) xor partyLcg.next())
         }
-        checksumValid = computeChecksum() == bytes.u16(6)
+        checksumValid = computeChecksum() == raw.u16(6)
     }
 
-    // From the plain header (identical to the raw header, which isn't encrypted).
     private fun shuffleValue() = (((plain.u32(0) shr 13) and 31) % 24).toInt()
     private fun computeChecksum(): Int {
         var sum = 0
@@ -43,59 +47,101 @@ class Pk4(raw: ByteArray) {
         return sum and 0xFFFF
     }
 
-    val personality: Long get() = plain.u32(0)
+    override var personality: Long
+        get() = plain.u32(0)
+        set(v) = plain.put32(0, v and 0xFFFFFFFFL)
     val isEmpty: Boolean get() = species == 0 && personality == 0L
 
-    var species: Int
+    // ---- block A ----
+    override var species: Int
         get() = plain.u16(0x08)
         set(v) = plain.put16(0x08, v)
-    var heldItem: Int
+    override var heldItem: Int
         get() = plain.u16(0x0A)
         set(v) = plain.put16(0x0A, v)
-    val trainerId: Int get() = plain.u16(0x0C)
-    val secretId: Int get() = plain.u16(0x0E)
-    var experience: Long
+    override val trainerId: Int get() = plain.u16(0x0C)
+    override val secretId: Int get() = plain.u16(0x0E)
+    override var experience: Long
         get() = plain.u32(0x10)
         set(v) = plain.put32(0x10, v)
-    var friendship: Int
+    override var friendship: Int
         get() = plain.u8(0x14)
-        set(v) { plain[0x14] = v.toByte() }
-    val ability: Int get() = plain.u8(0x15)
+        set(v) { plain[0x14] = v.coerceIn(0, 255).toByte() }
+    /** Ability id itself (not a slot) — Gen 4 stores it directly. */
+    var ability: Int
+        get() = plain.u8(0x15)
+        set(v) { plain[0x15] = v.toByte() }
 
-    fun ev(stat: Int) = plain.u8(0x18 + stat)
-    fun setEv(stat: Int, v: Int) { plain[0x18 + stat] = v.coerceIn(0, 255).toByte() }
-    val evs get() = (0 until 6).map(::ev)
+    override fun ev(stat: Int) = plain.u8(0x18 + stat)
+    override fun setEv(stat: Int, value: Int) { plain[0x18 + stat] = value.coerceIn(0, 255).toByte() }
 
-    fun move(i: Int) = plain.u16(0x28 + i * 2)
+    // ---- block B ----
+    override fun move(i: Int) = plain.u16(0x28 + i * 2)
     fun setMove(i: Int, m: Int) = plain.put16(0x28 + i * 2, m)
-    val moves get() = (0 until 4).map(::move)
-    fun pp(i: Int) = plain.u8(0x30 + i)
+    override val moves get() = (0 until 4).map(::move)
+    override fun pp(i: Int) = plain.u8(0x30 + i)
+    override fun setPp(i: Int, pp: Int) { plain[0x30 + i] = pp.coerceIn(0, 255).toByte() }
+    override fun ppUps(i: Int) = plain.u8(0x34 + i)
+    override fun setPpUps(i: Int, ups: Int) { plain[0x34 + i] = ups.coerceIn(0, 3).toByte() }
 
     private var ivWord: Long
         get() = plain.u32(0x38)
         set(v) = plain.put32(0x38, v)
-    fun iv(stat: Int) = ((ivWord shr (stat * 5)) and 0x1F).toInt()
-    fun setIv(stat: Int, v: Int) {
+    override fun iv(stat: Int) = ((ivWord shr (stat * 5)) and 0x1F).toInt()
+    override fun setIv(stat: Int, value: Int) {
         val s = stat * 5
-        ivWord = (ivWord and (0x1FL shl s).inv()) or (v.coerceIn(0, 31).toLong() shl s)
+        ivWord = (ivWord and (0x1FL shl s).inv()) or (value.coerceIn(0, 31).toLong() shl s)
     }
-    val ivs get() = (0 until 6).map(::iv)
-    val isEgg get() = (ivWord shr 30) and 1L == 1L
-    val isNicknamed get() = (ivWord shr 31) and 1L == 1L
+    override val isEgg get() = (ivWord shr 30) and 1L == 1L
+    var isNicknamed: Boolean
+        get() = (ivWord shr 31) and 1L == 1L
+        set(v) { ivWord = if (v) ivWord or (1L shl 31) else ivWord and (1L shl 31).inv() }
 
-    val isFemale get() = plain.u8(0x40) and 2 != 0
-    val isGenderless get() = plain.u8(0x40) and 4 != 0
+    /** Byte 0x40: bit 0 fateful encounter, bit 1 female, bit 2 genderless, bits 3-7 form. */
+    var isFemale: Boolean
+        get() = plain.u8(0x40) and 2 != 0
+        set(v) { plain[0x40] = ((plain.u8(0x40) and 2.inv()) or (if (v) 2 else 0)).toByte() }
+    var isGenderless: Boolean
+        get() = plain.u8(0x40) and 4 != 0
+        set(v) { plain[0x40] = ((plain.u8(0x40) and 4.inv()) or (if (v) 4 else 0)).toByte() }
     val form get() = plain.u8(0x40) shr 3
 
-    val nickname: String get() = Gen4Text.decode(plain, 0x48, 11)
-    val otName: String get() = Gen4Text.decode(plain, 0x68, 8)
+    // ---- blocks C, D ----
+    override val nickname: String get() = Gen4Text.decode(plain, 0x48, 11)
+    fun setNickname(text: String) = Gen4Text.encode(text, 11).copyInto(plain, 0x48)
+    override val otName: String get() = Gen4Text.decode(plain, 0x68, 8)
 
-    val nature get() = (personality % 25).toInt()
-    val isShiny get() = (trainerId xor secretId xor (personality shr 16).toInt() xor (personality and 0xFFFF).toInt()) < 8
+    override val nature get() = (personality % 25).toInt()
+    override val isShiny get() = (trainerId xor secretId xor (personality shr 16).toInt() xor (personality and 0xFFFF).toInt()) < 8
 
+    // ---- party-only ----
     val level: Int? get() = if (isParty) plain.u8(0x8C) else null
     val currentHp: Int? get() = if (isParty) plain.u16(0x8E) else null
     val maxHp: Int? get() = if (isParty) plain.u16(0x90) else null
+    val partyStats: List<Int>? get() = if (isParty) List(6) { plain.u16(0x90 + it * 2) } else null
+
+    /** Writes level and stats (HP, Atk, Def, Spe, SpA, SpD), keeping HP lost to damage. */
+    fun setPartyStats(level: Int, stats: List<Int>) {
+        require(isParty)
+        val oldMax = plain.u16(0x90)
+        val oldHp = plain.u16(0x8E)
+        val newMax = stats[0]
+        val hp = when {
+            oldMax == 0 -> newMax
+            oldHp == 0 -> 0
+            else -> (newMax - (oldMax - oldHp)).coerceIn(1, newMax)
+        }
+        plain[0x8C] = level.toByte()
+        plain.put16(0x8E, hp)
+        stats.forEachIndexed { i, v -> plain.put16(0x90 + i * 2, v) }
+    }
+
+    override fun copy(): Pk4 = Pk4(toBytes())
+
+    /** Party record with an empty party area (status cleared); stats are filled in by the editor. */
+    fun toPartyForm(): Pk4 = if (isParty) copy() else fromPlain(plain.copyOf(PARTY_SIZE))
+    /** The box part is encrypted independently of the party area, so truncation is valid. */
+    fun toBoxForm(): Pk4 = Pk4(toBytes().copyOf(BOX_SIZE))
 
     fun toBytes(): ByteArray {
         val out = plain.copyOf()
@@ -125,16 +171,11 @@ class Pk4(raw: ByteArray) {
             "DABC", "DACB", "DBAC", "DBCA", "DCAB", "DCBA",
         ).map { s -> IntArray(4) { s[it] - 'A' } }.toTypedArray()
 
-        val NATURES = listOf(
-            "Hardy", "Lonely", "Brave", "Adamant", "Naughty", "Bold", "Docile", "Relaxed", "Impish", "Lax",
-            "Timid", "Hasty", "Serious", "Jolly", "Naive", "Modest", "Mild", "Quiet", "Bashful", "Rash",
-            "Calm", "Gentle", "Sassy", "Careful", "Quirky",
-        )
+        val NATURES get() = GameData.NATURES
 
-        /** Builds an encrypted record from canonical (decrypted) bytes; used by tests and future editing. */
+        /** Builds an encrypted record from canonical (decrypted) bytes. */
         fun fromPlain(plainBytes: ByteArray): Pk4 {
             require(plainBytes.size == BOX_SIZE || plainBytes.size == PARTY_SIZE)
-            // Encrypt by round-tripping through a record whose "plain" is our bytes.
             val tmp = Pk4(ByteArray(plainBytes.size))
             plainBytes.copyInto(tmp.plain)
             return Pk4(tmp.toBytes())

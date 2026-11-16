@@ -1,5 +1,6 @@
 package com.pokeemu.app.ui
 
+import com.pokeemu.core.Slot
 import android.content.res.Configuration
 import android.graphics.BitmapFactory
 import android.view.SurfaceHolder

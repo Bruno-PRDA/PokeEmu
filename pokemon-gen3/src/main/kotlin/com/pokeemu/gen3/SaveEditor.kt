@@ -1,16 +1,20 @@
 package com.pokeemu.gen3
 
-/** Where a Pokémon lives in the save. */
-sealed interface Slot {
-    data class Party(val index: Int) : Slot
-    data class Box(val box: Int, val index: Int) : Slot
-}
+import com.pokeemu.core.BaseStats
+import com.pokeemu.core.GameRules
+import com.pokeemu.core.Gender
+import com.pokeemu.core.Mon
+import com.pokeemu.core.MonEditor
+import com.pokeemu.core.Slot
 
 /**
  * Editable view of a save's Pokémon. Changes stay in memory until [toBytes];
  * nothing touches the file on disk.
  */
-class SaveEditor(private val save: Gen3Save, val rom: RomData) {
+class SaveEditor(private val save: Gen3Save, val rom: RomData) : MonEditor {
+    override val data: RomData get() = rom
+    override val boxCount get() = Gen3Save.BOX_COUNT
+    override val boxSlots get() = Gen3Save.BOX_SLOTS
 
     private val party: MutableList<Pk3> = save.party.map { it.copy() }.toMutableList()
 
@@ -18,25 +22,26 @@ class SaveEditor(private val save: Gen3Save, val rom: RomData) {
     val pkEncoding: Pk3Encoding get() = save.pkEncoding
     private val boxes: List<MutableList<Pk3?>> = List(Gen3Save.BOX_COUNT) { b -> save.box(b).toMutableList() }
 
-    var dirty = false
+    override var dirty = false
         private set
 
     val game get() = save.game
     val trainer get() = save.trainer
-    val partyMembers: List<Pk3> get() = party.toList()
-    fun box(b: Int): List<Pk3?> = boxes[b].toList()
-    fun boxName(b: Int) = save.boxName(b).ifBlank { "Box ${b + 1}" }
+    override val partyMembers: List<Pk3> get() = party.toList()
+    override fun box(b: Int): List<Pk3?> = boxes[b].toList()
+    override fun boxName(b: Int) = save.boxName(b).ifBlank { "Box ${b + 1}" }
 
     /** Base stats are needed to compute party stats when withdrawing or editing. */
     val canRecalculate: Boolean get() = rom.baseStats.isNotEmpty()
 
-    operator fun get(slot: Slot): Pk3? = when (slot) {
+    override operator fun get(slot: Slot): Pk3? = when (slot) {
         is Slot.Party -> party.getOrNull(slot.index)
         is Slot.Box -> boxes[slot.box][slot.index]
     }
 
     /** Replaces the Pokémon at an occupied slot (after editing a copy). */
-    fun replace(slot: Slot, pk: Pk3) {
+    override fun replace(slot: Slot, mon: Mon) {
+        val pk = mon as Pk3
         requireNotNull(get(slot)) { "slot is empty" }
         when (slot) {
             is Slot.Party -> party[slot.index] = recalculated(pk.withEncoding(pkEncoding).toPartyForm())
@@ -49,7 +54,7 @@ class SaveEditor(private val save: Gen3Save, val rom: RomData) {
      * Moves [from] onto [to]: swaps if [to] is occupied, otherwise moves.
      * The party is kept compact and can never become empty.
      */
-    fun move(from: Slot, to: Slot) {
+    override fun move(from: Slot, to: Slot) {
         if (from == to) return
         val a = requireNotNull(get(from)) { "Nothing to move" }
         val b = get(to)
@@ -64,7 +69,7 @@ class SaveEditor(private val save: Gen3Save, val rom: RomData) {
         dirty = true
     }
 
-    fun delete(slot: Slot) {
+    override fun delete(slot: Slot) {
         requireNotNull(get(slot)) { "slot is empty" }
         if (slot is Slot.Party) require(party.size > 1) { "Your party can't be empty" }
         put(slot, null)
@@ -73,7 +78,8 @@ class SaveEditor(private val save: Gen3Save, val rom: RomData) {
     }
 
     /** Places an imported Pokémon into an empty slot. */
-    fun insert(slot: Slot, pk: Pk3) {
+    override fun insert(slot: Slot, mon: Mon) {
+        val pk = mon as Pk3
         require(get(slot) == null) { "That slot isn't empty" }
         if (slot is Slot.Party) {
             require(party.size < 6) { "Your party is full" }
@@ -113,12 +119,13 @@ class SaveEditor(private val save: Gen3Save, val rom: RomData) {
      * Level implied by experience (what the game will show after saving); falls
      * back to the stored party level when the growth rate is unknown.
      */
-    fun level(pk: Pk3): Int? = rom.base(pk.species)?.let { GameRules.levelForExp(it.growthRate, pk.experience) } ?: pk.level
+    override fun level(mon: Mon): Int? = (mon as Pk3).let { pk -> rom.base(pk.species)?.let { GameRules.levelForExp(it.growthRate, pk.experience) } ?: pk.level }
 
-    fun gender(pk: Pk3): Gender? = rom.base(pk.species)?.let { GameRules.gender(pk.personality, it.genderRatio) }
+    override fun gender(mon: Mon): Gender? = rom.base(mon.species)?.let { GameRules.gender(mon.personality, it.genderRatio) }
 
     /** Things that look wrong or would be impossible in the real game (warnings only). */
-    fun warnings(pk: Pk3): List<String> = buildList {
+    override fun warnings(mon: Mon): List<String> = buildList {
+        val pk = mon as Pk3
         if (!pk.checksumValid) add("Checksum is invalid — the game will show this as a Bad Egg")
         val evTotal = pk.evs.sum()
         if (evTotal > GameRules.MAX_EV_TOTAL) add("EVs total $evTotal (max ${GameRules.MAX_EV_TOTAL})")
@@ -131,7 +138,7 @@ class SaveEditor(private val save: Gen3Save, val rom: RomData) {
     }
 
     /** Writes all changes into the save and returns the new file bytes. */
-    fun toBytes(): ByteArray {
+    override fun toBytes(): ByteArray {
         save.setParty(party)
         for (b in 0 until Gen3Save.BOX_COUNT) for (s in 0 until Gen3Save.BOX_SLOTS) save.setBoxSlot(b, s, boxes[b][s])
         return save.toBytes()
@@ -140,13 +147,15 @@ class SaveEditor(private val save: Gen3Save, val rom: RomData) {
     // ---- edit helpers -------------------------------------------------------------------
 
     /** Sets level by setting experience to the minimum for that level. */
-    fun setLevel(pk: Pk3, level: Int) {
+    override fun setLevel(mon: Mon, level: Int) {
+        val pk = mon as Pk3
         val base = requireNotNull(rom.base(pk.species)) { "Unknown growth rate for this species" }
         pk.experience = GameRules.expForLevel(base.growthRate, level.coerceIn(1, GameRules.MAX_LEVEL))
     }
 
     /** Changes species; renames if the Pokémon still had the default name. */
-    fun setSpecies(pk: Pk3, species: Int) {
+    override fun setSpecies(mon: Mon, species: Int) {
+        val pk = mon as Pk3
         val wasDefaultName = rom.speciesNames.isNotEmpty() && pk.nickname.equals(rom.speciesName(pk.species), ignoreCase = true)
         val oldBase = rom.base(pk.species)
         val level = oldBase?.let { GameRules.levelForExp(it.growthRate, pk.experience) }
@@ -162,7 +171,8 @@ class SaveEditor(private val save: Gen3Save, val rom: RomData) {
     }
 
     /** Sets a move and fills its PP (with PP Ups) when base PP is known. */
-    fun setMove(pk: Pk3, index: Int, move: Int) {
+    override fun setMove(mon: Mon, index: Int, move: Int) {
+        val pk = mon as Pk3
         pk.setMove(index, move)
         val base = if (move == 0) 0 else rom.basePp(move) ?: 5
         val ups = (pk.ppBonuses shr (index * 2)) and 3
@@ -170,10 +180,40 @@ class SaveEditor(private val save: Gen3Save, val rom: RomData) {
     }
 
     /** Regenerates the personality value to change nature/gender/shininess, keeping everything else. */
-    fun setIdentity(pk: Pk3, nature: Int, gender: Gender?, shiny: Boolean) {
+    override fun setIdentity(mon: Mon, nature: Int, gender: Gender?, shiny: Boolean) {
+        val pk = mon as Pk3
         val ratio = rom.base(pk.species)?.genderRatio ?: 255
         val g = gender ?: GameRules.gender(pk.personality, ratio)
         pk.personality = GameRules.findPersonality(nature, g, ratio, shiny, pk.trainerId, pk.secretId)
+    }
+
+    override fun abilityOptions(mon: Mon): List<Int> {
+        val base = rom.base(mon.species) ?: return emptyList()
+        return if (base.ability2 != 0) listOf(base.ability1, base.ability2) else listOf(base.ability1)
+    }
+    override fun abilityIndex(mon: Mon): Int = (mon as Pk3).abilitySlot
+    override fun setAbility(mon: Mon, index: Int) {
+        (mon as Pk3).abilitySlot = index.coerceIn(0, 1)
+    }
+
+    override val maxNicknameLength get() = 10
+    override fun canEncode(text: String) = Gen3Text.canEncode(text)
+    override fun setNickname(mon: Mon, text: String) {
+        (mon as Pk3).nickname = text
+    }
+
+    override val fileExtension get() = "pk3"
+    override fun exportBytes(mon: Mon): ByteArray = (mon as Pk3).withEncoding(Pk3Encoding.STANDARD).toBoxBytes()
+    override fun parseImport(bytes: ByteArray): Mon {
+        require(bytes.size == Pk3.BOX_SIZE || bytes.size == Pk3.PARTY_SIZE) { "Not a .pk3 file (must be 80 or 100 bytes)" }
+        val pk = Pk3(bytes)
+        require(pk.checksumValid) { "That .pk3 is corrupted (bad checksum)" }
+        return pk
+    }
+
+    override fun verify(written: ByteArray) {
+        val expected = partyMembers.map { it.toBytes().toList() }
+        check(Gen3Save.parse(written).party.map { it.toBytes().toList() } == expected) { "verification failed" }
     }
 
     private companion object {

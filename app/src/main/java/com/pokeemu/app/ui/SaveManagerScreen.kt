@@ -1,5 +1,6 @@
 package com.pokeemu.app.ui
 
+import com.pokeemu.core.Slot
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -299,7 +300,11 @@ private fun SummaryCard(s: SaveState, onEditPokemon: () -> Unit) {
                         "PC: %d Pokémon in %d boxes".format(s.pcCount, save.layout.boxCount),
                         modifier = Modifier.padding(top = 8.dp),
                     )
-                    Text("Gen 4 editing comes later.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
+                    if (s.gen4Names != null) {
+                        FilledTonalButton(onClick = onEditPokemon, modifier = Modifier.padding(top = 8.dp)) { Text("Edit Pokémon") }
+                    } else {
+                        Text("Editing needs game data from the ROM, which couldn't be read.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
+                    }
                 }
                 s.dsSaveSize != null -> {
                     Text("Nintendo DS save", style = MaterialTheme.typography.titleMedium)

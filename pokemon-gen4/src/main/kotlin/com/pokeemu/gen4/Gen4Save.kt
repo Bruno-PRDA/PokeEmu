@@ -68,10 +68,17 @@ data class Gen4Layout(
 
 data class Gen4Trainer(val name: String, val trainerId: Int, val secretId: Int, val money: Long)
 
-/** A parsed Gen 4 save (read-only for now). */
+/**
+ * A parsed Gen 4 save. Edits go into the newest general/storage blocks; [toBytes]
+ * writes them back in place with fresh checksums (save counters are unchanged,
+ * so the game keeps loading the same partition).
+ */
 class Gen4Save private constructor(
+    private val file: ByteArray,
     private val general: ByteArray,
+    private val generalBase: Int,
     private val storage: ByteArray,
+    private val storageBase: Int,
     val layout: Gen4Layout,
     /** True when only the backup partition (or only one block of each pair) was valid. */
     val usedFallback: Boolean,
@@ -95,17 +102,56 @@ class Gen4Save private constructor(
             }
         }
 
-    fun box(b: Int): List<Pk4?> {
-        require(b in 0 until layout.boxCount)
-        return (0 until 30).map { s ->
-            val at = layout.boxStart + b * layout.boxStride + s * Pk4.BOX_SIZE
-            Pk4(storage.copyOfRange(at, at + Pk4.BOX_SIZE)).takeUnless { it.isEmpty }
+    private fun slotOffset(b: Int, s: Int): Int {
+        require(b in 0 until layout.boxCount && s in 0 until BOX_SLOTS)
+        return layout.boxStart + b * layout.boxStride + s * Pk4.BOX_SIZE
+    }
+
+    fun box(b: Int): List<Pk4?> = (0 until BOX_SLOTS).map { s ->
+        val at = slotOffset(b, s)
+        if (storage.copyOfRange(at, at + Pk4.BOX_SIZE).all { it == 0.toByte() }) null
+        else Pk4(storage.copyOfRange(at, at + Pk4.BOX_SIZE)).takeUnless { it.isEmpty }
+    }
+
+    /**
+     * Box names follow the boxes: 20 characters each. HGSS-style saves have 8 bytes
+     * (current box, flags) in between.
+     */
+    fun boxName(b: Int): String {
+        val gap = if (layout.boxStride == 0x1000) 8 else 0
+        val at = layout.boxStart + layout.boxCount * layout.boxStride + gap + b * 0x28
+        if (at + 0x28 > storage.size - layout.footerSize) return ""
+        return Gen4Text.decode(storage, at, 20).takeUnless { '?' in it }.orEmpty()
+    }
+
+    fun setParty(members: List<Pk4>) {
+        require(members.size in 1..6)
+        general.put32(layout.partyCount, members.size.toLong())
+        for (i in 0 until 6) {
+            val bytes = members.getOrNull(i)?.toPartyForm()?.toBytes() ?: ByteArray(Pk4.PARTY_SIZE)
+            bytes.copyInto(general, layout.party + i * Pk4.PARTY_SIZE)
         }
+    }
+
+    fun setBoxSlot(b: Int, s: Int, pk: Pk4?) {
+        val bytes = pk?.toBoxForm()?.toBytes() ?: ByteArray(Pk4.BOX_SIZE)
+        bytes.copyInto(storage, slotOffset(b, s))
+    }
+
+    /** The whole save file with edited blocks and recomputed block checksums. */
+    fun toBytes(): ByteArray {
+        val out = file.copyOf()
+        for ((block, base) in listOf(general to generalBase, storage to storageBase)) {
+            block.copyInto(out, base)
+            out.put16(base + block.size - 2, crc16Ccitt(out, base, block.size - layout.footerSize))
+        }
+        return out
     }
 
     companion object {
         const val FILE_SIZE = 0x80000
         const val PARTITION_SIZE = 0x40000
+        const val BOX_SLOTS = 30
 
         /** True if the block at [start] of [size] bytes has a valid footer checksum. */
         fun blockValid(save: ByteArray, start: Int, size: Int, footerSize: Int): Boolean {
@@ -144,8 +190,9 @@ class Gen4Save private constructor(
             val sto = parts.filter { it.storage }.maxByOrNull { counter(bytes, it.base + l.storageOffset, l.storageSize, l.footerSize) }
                 ?: return null
             return Gen4Save(
-                bytes.copyOfRange(gen.base, gen.base + l.generalSize),
-                bytes.copyOfRange(sto.base + l.storageOffset, sto.base + l.storageOffset + l.storageSize),
+                bytes.copyOf(),
+                bytes.copyOfRange(gen.base, gen.base + l.generalSize), gen.base,
+                bytes.copyOfRange(sto.base + l.storageOffset, sto.base + l.storageOffset + l.storageSize), sto.base + l.storageOffset,
                 l, usedFallback = parts.count { it.general && it.storage } < 2,
             )
         }

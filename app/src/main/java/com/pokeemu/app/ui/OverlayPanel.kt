@@ -1,5 +1,8 @@
 package com.pokeemu.app.ui
 
+import com.pokeemu.core.BaseStats
+import com.pokeemu.core.GameRules
+import com.pokeemu.core.Gender
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,8 +24,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.pokeemu.gen3.GameRules
-import com.pokeemu.gen3.Gender
 import com.pokeemu.gen3.LiveState
 import com.pokeemu.gen3.Pk3
 import com.pokeemu.gen3.RomData

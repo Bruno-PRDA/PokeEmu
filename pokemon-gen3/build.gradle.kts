@@ -5,6 +5,7 @@ plugins {
 kotlin { jvmToolchain(17) }
 
 dependencies {
+    api(project(":pokemon-core"))
     testImplementation(kotlin("test"))
     testImplementation("junit:junit:4.13.2")
 }

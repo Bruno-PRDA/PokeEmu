@@ -46,6 +46,8 @@ object Gen4Text {
         }
     }
 
+    fun canEncode(text: String): Boolean = text.all { it in encodeMap }
+
     fun encode(text: String, maxChars: Int): ByteArray {
         val out = ByteArray(maxChars * 2) { 0xFF.toByte() }
         text.take(maxChars - 1).forEachIndexed { i, ch ->

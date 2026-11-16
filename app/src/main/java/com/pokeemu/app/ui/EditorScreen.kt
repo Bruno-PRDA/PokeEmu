@@ -1,5 +1,6 @@
 package com.pokeemu.app.ui
 
+import com.pokeemu.core.Slot
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -55,10 +56,12 @@ import com.pokeemu.app.RomDataStore
 import com.pokeemu.app.RomEntry
 import com.pokeemu.app.RomLibrary
 import com.pokeemu.gen3.Gen3Save
-import com.pokeemu.gen3.Pk3
-import com.pokeemu.gen3.Pk3Encoding
+import com.pokeemu.core.Mon
+import com.pokeemu.core.MonEditor
 import com.pokeemu.gen3.SaveEditor
-import com.pokeemu.gen3.Slot
+import com.pokeemu.gen4.Gen4Save
+import com.pokeemu.gen4.Gen4SaveEditor
+import com.pokeemu.saves.Platform
 import com.pokeemu.saves.GameStorage
 import com.pokeemu.saves.SaveManager
 import com.pokeemu.saves.romId
@@ -72,7 +75,7 @@ fun EditorScreen(rom: RomEntry, onBack: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var status by remember { mutableStateOf<String?>("Reading ROM…") }
-    var editor by remember { mutableStateOf<SaveEditor?>(null) }
+    var editor by remember { mutableStateOf<MonEditor?>(null) }
     var manager by remember { mutableStateOf<SaveManager?>(null) }
     var tick by remember { mutableIntStateOf(0) }
     var box by remember { mutableIntStateOf(0) }
@@ -85,7 +88,7 @@ fun EditorScreen(rom: RomEntry, onBack: () -> Unit) {
     var saving by remember { mutableStateOf(false) }
 
     fun toast(msg: String) = Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
-    fun act(block: (SaveEditor) -> Unit) {
+    fun act(block: (MonEditor) -> Unit) {
         val e = editor ?: return
         try { block(e) } catch (ex: IllegalArgumentException) { toast(ex.message ?: "Not allowed") }
         tick++
@@ -94,17 +97,23 @@ fun EditorScreen(rom: RomEntry, onBack: () -> Unit) {
     suspend fun load() {
         val (e, m) = withContext(Dispatchers.IO) {
             val local = RomLibrary(context).localCopy(rom.uri)
-            val bytes = local.file.readBytes() // GBA ROMs are at most 32 MB
             val id = local.id
             val storage = GameStorage(context.filesDir)
             val store = RomDataStore(storage)
-            val data = store.cached(id) ?: run {
-                withContext(Dispatchers.Main) { status = "Reading game data from the ROM (first time only)…" }
-                store.scanAndCache(id, bytes)
-            }
             val mgr = SaveManager(storage, id)
-            val save = Gen3Save.parse(mgr.saveFile.readBytes())
-            SaveEditor(save, data) to mgr
+            if (rom.header.platform == Platform.NDS) {
+                withContext(Dispatchers.Main) { status = "Reading game data from the ROM…" }
+                val data = store.gen4(id, local.file) ?: throw IllegalStateException("couldn't read game data from this ROM")
+                val save = Gen4Save.parse(mgr.saveFile.readBytes())
+                (Gen4SaveEditor(save, data) as MonEditor) to mgr
+            } else {
+                val data = store.cached(id) ?: run {
+                    withContext(Dispatchers.Main) { status = "Reading game data from the ROM (first time only)…" }
+                    store.scanAndCache(id, local.file.readBytes()) // GBA ROMs are at most 32 MB
+                }
+                val save = Gen3Save.parse(mgr.saveFile.readBytes())
+                (SaveEditor(save, data) as MonEditor) to mgr
+            }
         }
         editor = e; manager = m; status = null
     }
@@ -116,7 +125,7 @@ fun EditorScreen(rom: RomEntry, onBack: () -> Unit) {
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri: Uri? ->
         val pk = exportSlot?.let { editor?.get(it) }
         if (uri != null && pk != null) {
-            runCatching { context.contentResolver.openOutputStream(uri, "wt")!!.use { it.write(pk.withEncoding(Pk3Encoding.STANDARD).toBoxBytes()) } }
+            runCatching { context.contentResolver.openOutputStream(uri, "wt")!!.use { it.write(editor!!.exportBytes(pk)) } }
                 .onSuccess { toast("Exported") }.onFailure { toast("Export failed: ${it.message}") }
         }
         exportSlot = null
@@ -126,12 +135,8 @@ fun EditorScreen(rom: RomEntry, onBack: () -> Unit) {
         importTarget = null
         if (uri == null || target == null) return@rememberLauncherForActivityResult
         val bytes = runCatching { context.contentResolver.openInputStream(uri)!!.use { it.readBytes() } }.getOrNull()
-        if (bytes == null || (bytes.size != Pk3.BOX_SIZE && bytes.size != Pk3.PARTY_SIZE)) {
-            toast("Not a .pk3 file (must be 80 or 100 bytes)"); return@rememberLauncherForActivityResult
-        }
-        val pk = Pk3(bytes)
-        if (!pk.checksumValid) { toast("That .pk3 is corrupted (bad checksum)"); return@rememberLauncherForActivityResult }
-        act { it.insert(target, pk) }
+            ?: run { toast("Couldn't read that file"); return@rememberLauncherForActivityResult }
+        act { it.insert(target, it.parseImport(bytes)) }
     }
 
     fun save() {
@@ -141,13 +146,8 @@ fun EditorScreen(rom: RomEntry, onBack: () -> Unit) {
         scope.launch {
             try {
                 withContext(Dispatchers.IO) {
-                    val bytes = e.toBytes()
-                    val expectedParty = e.partyMembers.map { it.toBytes().toList() }
-                    m.applyEdit(bytes) { written ->
-                        // Verify: the written file must parse and contain exactly the edited party.
-                        val check = Gen3Save.parse(written)
-                        check(check.party.map { it.toBytes().toList() } == expectedParty) { "verification failed" }
-                    }
+                    // Verify: the written file must parse and contain exactly the edited party.
+                    m.applyEdit(e.toBytes(), e::verify)
                 }
                 toast("Saved. A backup of the previous save was kept.")
                 load()
@@ -174,7 +174,7 @@ fun EditorScreen(rom: RomEntry, onBack: () -> Unit) {
                 onDone = { edited -> act { it.replace(detailSlot, edited) }; detail = null },
                 onCancel = { detail = null },
                 onDelete = { act { it.delete(detailSlot) }; detail = null },
-                onExport = { exportSlot = detailSlot; exportLauncher.launch("${e.rom.speciesName(pk.species)}.pk3") },
+                onExport = { exportSlot = detailSlot; exportLauncher.launch("${e.data.speciesName(pk.species)}.${e.fileExtension}") },
             )
             return
         }
@@ -216,7 +216,7 @@ fun EditorScreen(rom: RomEntry, onBack: () -> Unit) {
             moving?.let { m ->
                 Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
                     Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text("Moving ${e[m]?.let { e.rom.speciesName(it.species) }} — tap where to put it", Modifier.weight(1f))
+                        Text("Moving ${e[m]?.let { e.data.speciesName(it.species) }} — tap where to put it", Modifier.weight(1f))
                         TextButton(onClick = { moving = null }) { Text("Cancel") }
                     }
                 }
@@ -227,16 +227,16 @@ fun EditorScreen(rom: RomEntry, onBack: () -> Unit) {
                 Cell(e, e.partyMembers.getOrNull(i), selected = moving == slot, onClick = { onCell(slot) }, onLongClick = { moving = slot })
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = { box = (box + Gen3Save.BOX_COUNT - 1) % Gen3Save.BOX_COUNT }) { Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Previous box") }
+                IconButton(onClick = { box = (box + e.boxCount - 1) % e.boxCount }) { Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Previous box") }
                 Text(e.boxName(box), Modifier.weight(1f), textAlign = TextAlign.Center, style = MaterialTheme.typography.titleMedium)
-                IconButton(onClick = { box = (box + 1) % Gen3Save.BOX_COUNT }) { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Next box") }
+                IconButton(onClick = { box = (box + 1) % e.boxCount }) { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Next box") }
             }
             val contents = e.box(box)
-            Grid(columns = 6, cells = Gen3Save.BOX_SLOTS) { i ->
+            Grid(columns = 6, cells = e.boxSlots) { i ->
                 val slot = Slot.Box(box, i)
                 Cell(e, contents[i], selected = moving == slot, compact = true, onClick = { onCell(slot) }, onLongClick = { moving = slot })
             }
-            Text("Tap to edit · long-press to move · tap an empty slot to import a .pk3", style = MaterialTheme.typography.bodySmall)
+            Text("Tap to edit · long-press to move · tap an empty slot to import a .${e.fileExtension}", style = MaterialTheme.typography.bodySmall)
         }
     }
 
@@ -250,7 +250,7 @@ fun EditorScreen(rom: RomEntry, onBack: () -> Unit) {
     if (showReport && e != null) AlertDialog(
         onDismissRequest = { showReport = false },
         title = { Text("Game data from ROM") },
-        text = { Text(e.rom.report.joinToString("\n\n")) },
+        text = { Text(e.data.report.joinToString("\n\n")) },
         confirmButton = { TextButton(onClick = { showReport = false }) { Text("OK") } },
     )
 }
@@ -272,7 +272,7 @@ private fun Grid(columns: Int, cells: Int, content: @Composable (Int) -> Unit) {
 @OptIn(ExperimentalFoundationApi::class)
 @NonSkippableComposable // warnings depend on SaveEditor state
 @Composable
-private fun Cell(e: SaveEditor, pk: Pk3?, selected: Boolean, compact: Boolean = false, onClick: () -> Unit, onLongClick: () -> Unit) {
+private fun Cell(e: MonEditor, pk: Mon?, selected: Boolean, compact: Boolean = false, onClick: () -> Unit, onLongClick: () -> Unit) {
     val warn = pk != null && e.warnings(pk).isNotEmpty()
     Card(
         modifier = Modifier.fillMaxWidth().aspectRatio(if (compact) 1f else 2.2f)
@@ -288,7 +288,7 @@ private fun Cell(e: SaveEditor, pk: Pk3?, selected: Boolean, compact: Boolean = 
     ) {
         Box(Modifier.fillMaxSize().padding(4.dp), contentAlignment = Alignment.Center) {
             if (pk != null) {
-                val name = if (pk.isEgg) "Egg" else e.rom.speciesName(pk.species)
+                val name = if (pk.isEgg) "Egg" else e.data.speciesName(pk.species)
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
                         name + if (pk.isShiny) "★" else "",

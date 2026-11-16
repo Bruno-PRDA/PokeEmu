@@ -1,5 +1,8 @@
 package com.pokeemu.app.ui
 
+import com.pokeemu.core.BaseStats
+import com.pokeemu.core.GameRules
+import com.pokeemu.core.Gender
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -43,12 +46,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import com.pokeemu.gen3.GameRules
-import com.pokeemu.gen3.Gen3Text
-import com.pokeemu.gen3.Gender
-import com.pokeemu.gen3.Pk3
-import com.pokeemu.gen3.RomData
-import com.pokeemu.gen3.SaveEditor
+import com.pokeemu.core.GameData
+import com.pokeemu.core.Mon
+import com.pokeemu.core.MonEditor
 
 private val STAT_NAMES = listOf("HP", "Attack", "Defense", "Speed", "Sp. Atk", "Sp. Def")
 
@@ -59,9 +59,9 @@ private val STAT_NAMES = listOf("HP", "Attack", "Defense", "Speed", "Sp. Atk", "
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PokemonDetail(
-    original: Pk3,
-    editor: SaveEditor,
-    onDone: (Pk3) -> Unit,
+    original: Mon,
+    editor: MonEditor,
+    onDone: (Mon) -> Unit,
     onCancel: () -> Unit,
     onDelete: () -> Unit,
     onExport: () -> Unit,
@@ -70,7 +70,7 @@ fun PokemonDetail(
     var tick by remember { mutableIntStateOf(0) } // bump after mutating pk to recompose
     var tab by remember { mutableIntStateOf(0) }
     var error by remember { mutableStateOf<String?>(null) }
-    val rom = editor.rom
+    val rom = editor.data
 
     fun edit(block: () -> Unit) {
         try {
@@ -114,7 +114,7 @@ fun PokemonDetail(
                     else -> StatsTab(pk, editor, ::edit)
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = onExport) { Text("Export .pk3") }
+                    OutlinedButton(onClick = onExport) { Text("Export .${editor.fileExtension}") }
                     OutlinedButton(onClick = onDelete) { Text("Delete") }
                 }
             }
@@ -124,7 +124,7 @@ fun PokemonDetail(
 
 @NonSkippableComposable // reads `pk`, which is edited in place
 @Composable
-private fun SummaryTab(pk: Pk3, editor: SaveEditor, rom: RomData, edit: (() -> Unit) -> Unit) {
+private fun SummaryTab(pk: Mon, editor: MonEditor, rom: GameData, edit: (() -> Unit) -> Unit) {
     var picker by remember { mutableStateOf<String?>(null) }
     val base = rom.base(pk.species)
 
@@ -133,12 +133,12 @@ private fun SummaryTab(pk: Pk3, editor: SaveEditor, rom: RomData, edit: (() -> U
     var nick by remember(pk.personality, pk.species) { mutableStateOf(pk.nickname) }
     OutlinedTextField(
         nick, { v ->
-            nick = v.take(10)
-            if (Gen3Text.canEncode(nick)) edit { pk.nickname = nick }
+            nick = v.take(editor.maxNicknameLength)
+            if (editor.canEncode(nick)) edit { editor.setNickname(pk, nick) }
         },
         label = { Text("Nickname") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
-        isError = !Gen3Text.canEncode(nick),
-        supportingText = { if (!Gen3Text.canEncode(nick)) Text("Contains a character Gen 3 can't show") },
+        isError = !editor.canEncode(nick),
+        supportingText = { if (!editor.canEncode(nick)) Text("Contains a character this game can't show") },
     )
 
     val level = editor.level(pk)
@@ -149,7 +149,7 @@ private fun SummaryTab(pk: Pk3, editor: SaveEditor, rom: RomData, edit: (() -> U
     LabeledButton("Held item", rom.itemName(pk.heldItem)) { picker = "item" }
 
     Text("Nature", style = MaterialTheme.typography.labelLarge)
-    Dropdown(Pk3.NATURES[pk.nature], Pk3.NATURES) { n ->
+    Dropdown(GameData.NATURES[pk.nature], GameData.NATURES) { n ->
         edit { editor.setIdentity(pk, n, editor.gender(pk), pk.isShiny) }
     }
 
@@ -174,13 +174,14 @@ private fun SummaryTab(pk: Pk3, editor: SaveEditor, rom: RomData, edit: (() -> U
 
     if (base != null) {
         Text("Ability", style = MaterialTheme.typography.labelLarge)
+        val current = editor.abilityIndex(pk)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(pk.abilitySlot == 0, onClick = { edit { pk.abilitySlot = 0 } }, label = { Text(rom.abilityName(base.ability1)) })
-            if (base.ability2 != 0) {
-                FilterChip(pk.abilitySlot == 1, onClick = { edit { pk.abilitySlot = 1 } }, label = { Text(rom.abilityName(base.ability2)) })
+            editor.abilityOptions(pk).forEachIndexed { i, a ->
+                FilterChip(current == i, onClick = { edit { editor.setAbility(pk, i) } }, label = { Text(rom.abilityName(a)) })
             }
         }
-        Text("Type: ${RomData.typeName(base.type1)}${if (base.type2 != base.type1) " / ${RomData.typeName(base.type2)}" else ""}")
+        if (current < 0) Text("This game stores abilities its own way, so the ability is left unchanged.", style = MaterialTheme.typography.bodySmall)
+        Text("Type: ${rom.typeName(base.type1)}${if (base.type2 != base.type1) " / ${rom.typeName(base.type2)}" else ""}")
     }
 
     Text("Friendship: ${pk.friendship}", style = MaterialTheme.typography.labelLarge)
@@ -199,19 +200,19 @@ private fun SummaryTab(pk: Pk3, editor: SaveEditor, rom: RomData, edit: (() -> U
 
 @NonSkippableComposable
 @Composable
-private fun MovesTab(pk: Pk3, editor: SaveEditor, rom: RomData, edit: (() -> Unit) -> Unit) {
+private fun MovesTab(pk: Mon, editor: MonEditor, rom: GameData, edit: (() -> Unit) -> Unit) {
     var picking by remember { mutableStateOf<Int?>(null) }
     for (i in 0 until 4) {
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 LabeledButton("Move ${i + 1}", rom.moveName(pk.move(i))) { picking = i }
                 if (pk.move(i) != 0) {
-                    val ups = (pk.ppBonuses shr (i * 2)) and 3
+                    val ups = pk.ppUps(i)
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         NumberField("PP", pk.pp(i), 0..99, modifier = Modifier.width(110.dp)) { v -> edit { pk.setPp(i, v) } }
                         Text("PP Ups")
                         for (u in 0..3) FilterChip(ups == u, onClick = {
-                            edit { pk.ppBonuses = (pk.ppBonuses and (3 shl (i * 2)).inv()) or (u shl (i * 2)) }
+                            edit { pk.setPpUps(i, u) }
                         }, label = { Text("$u") })
                     }
                 }
@@ -225,8 +226,8 @@ private fun MovesTab(pk: Pk3, editor: SaveEditor, rom: RomData, edit: (() -> Uni
 
 @NonSkippableComposable
 @Composable
-private fun StatsTab(pk: Pk3, editor: SaveEditor, edit: (() -> Unit) -> Unit) {
-    val base = editor.rom.base(pk.species)
+private fun StatsTab(pk: Mon, editor: MonEditor, edit: (() -> Unit) -> Unit) {
+    val base = editor.data.base(pk.species)
     val level = editor.level(pk)
     val stats = if (base != null && level != null) GameRules.stats(base, level, pk.ivs, pk.evs, pk.nature) else null
     val evTotal = pk.evs.sum()

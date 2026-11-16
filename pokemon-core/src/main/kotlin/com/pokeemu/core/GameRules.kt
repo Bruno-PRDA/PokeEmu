@@ -1,8 +1,20 @@
-package com.pokeemu.gen3
+package com.pokeemu.core
 
 import kotlin.random.Random
 
 enum class Gender { MALE, FEMALE, GENDERLESS }
+
+/** Per-species data the editor needs. Stats are in HP, Atk, Def, Spe, SpA, SpD order. */
+data class BaseStats(
+    val stats: List<Int>,
+    val type1: Int,
+    val type2: Int,
+    /** 0 = always male, 254 = always female, 255 = genderless, else female if (pid & 0xFF) < ratio. */
+    val genderRatio: Int,
+    val growthRate: Int,
+    val ability1: Int,
+    val ability2: Int,
+)
 
 /** Gen 3 formulas, matching the games' integer math. */
 object GameRules {

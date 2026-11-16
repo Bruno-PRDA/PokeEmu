@@ -1,21 +1,13 @@
 package com.pokeemu.gen3
 
+import com.pokeemu.core.BaseStats
+import com.pokeemu.core.GameData
+import com.pokeemu.core.GameRules
+import com.pokeemu.core.Gender
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.InputStream
 import java.io.OutputStream
-
-/** Per-species data the editor needs. Stats are in HP, Atk, Def, Spe, SpA, SpD order. */
-data class BaseStats(
-    val stats: List<Int>,
-    val type1: Int,
-    val type2: Int,
-    /** 0 = always male, 254 = always female, 255 = genderless, else female if (pid & 0xFF) < ratio. */
-    val genderRatio: Int,
-    val growthRate: Int,
-    val ability1: Int,
-    val ability2: Int,
-)
 
 /**
  * Game data read from a ROM (vanilla or hack). Every table is optional:
@@ -23,23 +15,19 @@ data class BaseStats(
  * showing raw numbers.
  */
 data class RomData(
-    val speciesNames: List<String>,
-    val moveNames: List<String>,
-    val abilityNames: List<String>,
-    val itemNames: List<String>,
+    override val speciesNames: List<String>,
+    override val moveNames: List<String>,
+    override val abilityNames: List<String>,
+    override val itemNames: List<String>,
     /** Indexed by species; null entries when unknown. Empty when the table wasn't found. */
     val baseStats: List<BaseStats?>,
     /** Base PP per move; empty when not found. */
     val movePp: List<Int>,
     /** Human-readable notes on what was found, for the "ROM data" info panel. */
-    val report: List<String>,
-) {
-    fun speciesName(id: Int) = speciesNames.getOrNull(id)?.takeIf { it.isNotBlank() } ?: "#$id"
-    fun moveName(id: Int) = if (id == 0) "—" else moveNames.getOrNull(id)?.takeIf { it.isNotBlank() } ?: "Move #$id"
-    fun abilityName(id: Int) = abilityNames.getOrNull(id)?.takeIf { it.isNotBlank() } ?: "Ability #$id"
-    fun itemName(id: Int) = if (id == 0) "None" else itemNames.getOrNull(id)?.takeIf { it.isNotBlank() } ?: "Item #$id"
-    fun base(species: Int): BaseStats? = baseStats.getOrNull(species)
-    fun basePp(move: Int): Int? = movePp.getOrNull(move)?.takeIf { it > 0 }
+    override val report: List<String>,
+) : GameData {
+    override fun base(species: Int): BaseStats? = baseStats.getOrNull(species)
+    override fun basePp(move: Int): Int? = movePp.getOrNull(move)?.takeIf { it > 0 }
 
     fun write(out: OutputStream) {
         val d = DataOutputStream(out.buffered())

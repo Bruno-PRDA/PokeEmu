@@ -1,5 +1,8 @@
 package com.pokeemu.gen3
 
+import com.pokeemu.core.BaseStats
+import com.pokeemu.core.GameRules
+import com.pokeemu.core.Gender
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File

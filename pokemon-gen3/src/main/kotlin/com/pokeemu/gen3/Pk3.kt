@@ -1,5 +1,7 @@
 package com.pokeemu.gen3
 
+import com.pokeemu.core.Mon
+
 /** How the 48 data bytes of a Pokémon record are stored. */
 enum class Pk3Encoding {
     /** Vanilla: shuffled by personality, XOR-encrypted, with a checksum. */
@@ -18,7 +20,7 @@ enum class Pk3Encoding {
  * original-trainer id). This class decodes on construction and re-encodes in
  * [toBytes]; unknown bytes are preserved, so decode → encode is byte-identical.
  */
-class Pk3(raw: ByteArray, val encoding: Pk3Encoding = Pk3Encoding.STANDARD) {
+class Pk3(raw: ByteArray, val encoding: Pk3Encoding = Pk3Encoding.STANDARD) : Mon {
     init {
         require(raw.size == BOX_SIZE || raw.size == PARTY_SIZE) { "Pk3 must be 80 or 100 bytes, got ${raw.size}" }
     }
@@ -30,7 +32,7 @@ class Pk3(raw: ByteArray, val encoding: Pk3Encoding = Pk3Encoding.STANDARD) {
     val isParty: Boolean get() = bytes.size == PARTY_SIZE
 
     /** True if the stored checksum matched the decrypted data (false = "Bad Egg"). */
-    val checksumValid: Boolean
+    override val checksumValid: Boolean
 
     init {
         if (encoding == Pk3Encoding.PLAIN) {
@@ -51,7 +53,7 @@ class Pk3(raw: ByteArray, val encoding: Pk3Encoding = Pk3Encoding.STANDARD) {
     }
 
     /** Independent copy (same format and encoding). */
-    fun copy(): Pk3 = Pk3(toBytes(), encoding)
+    override fun copy(): Pk3 = Pk3(toBytes(), encoding)
 
     /** Same Pokémon stored with another encoding (e.g. standard for .pk3 export). */
     fun withEncoding(target: Pk3Encoding): Pk3 {
@@ -68,20 +70,20 @@ class Pk3(raw: ByteArray, val encoding: Pk3Encoding = Pk3Encoding.STANDARD) {
      * Changing this changes the encryption key and substructure order; that is
      * handled in [toBytes] because the decrypted data is kept separately.
      */
-    var personality: Long
+    override var personality: Long
         get() = bytes.u32(0x00)
         set(v) = bytes.put32(0x00, v and 0xFFFFFFFFL)
     val otId: Long get() = bytes.u32(0x04)
-    val trainerId: Int get() = (otId and 0xFFFF).toInt()
-    val secretId: Int get() = (otId shr 16).toInt()
+    override val trainerId: Int get() = (otId and 0xFFFF).toInt()
+    override val secretId: Int get() = (otId shr 16).toInt()
 
-    var nickname: String
+    override var nickname: String
         get() = Gen3Text.decode(bytes, 0x08, 10)
         set(v) {
             Gen3Text.encode(v, 10).copyInto(bytes, 0x08)
         }
 
-    val otName: String get() = Gen3Text.decode(bytes, 0x14, 7)
+    override val otName: String get() = Gen3Text.decode(bytes, 0x14, 7)
     val language: Int get() = bytes.u8(0x12)
 
     /** An all-zero slot (species 0, no personality). */
@@ -90,36 +92,40 @@ class Pk3(raw: ByteArray, val encoding: Pk3Encoding = Pk3Encoding.STANDARD) {
     // ---- Growth (substructure 0) ------------------------------------------------------
 
     /** Internal species index (not National Dex number). */
-    var species: Int
+    override var species: Int
         get() = data.u16(0)
         set(v) = data.put16(0, v)
-    var heldItem: Int
+    override var heldItem: Int
         get() = data.u16(2)
         set(v) = data.put16(2, v)
-    var experience: Long
+    override var experience: Long
         get() = data.u32(4)
         set(v) = data.put32(4, v)
     var ppBonuses: Int
         get() = data.u8(8)
         set(v) = data.put8(8, v)
-    var friendship: Int
+    override var friendship: Int
         get() = data.u8(9)
         set(v) = data.put8(9, v)
 
     // ---- Attacks (substructure 1) -----------------------------------------------------
 
-    fun move(i: Int): Int = data.u16(12 + i * 2)
+    override fun move(i: Int): Int = data.u16(12 + i * 2)
     fun setMove(i: Int, move: Int) = data.put16(12 + i * 2, move)
-    fun pp(i: Int): Int = data.u8(20 + i)
-    fun setPp(i: Int, pp: Int) = data.put8(20 + i, pp)
-    val moves: List<Int> get() = (0 until 4).map(::move)
+    override fun pp(i: Int): Int = data.u8(20 + i)
+    override fun setPp(i: Int, pp: Int) = data.put8(20 + i, pp)
+    override val moves: List<Int> get() = (0 until 4).map(::move)
+    override fun ppUps(i: Int): Int = (ppBonuses shr (i * 2)) and 3
+    override fun setPpUps(i: Int, ups: Int) {
+        ppBonuses = (ppBonuses and (3 shl (i * 2)).inv()) or ((ups and 3) shl (i * 2))
+    }
 
     // ---- EVs & condition (substructure 2) ----------------------------------------------
 
     /** EVs in HP, Atk, Def, Spe, SpA, SpD order. */
-    fun ev(stat: Int): Int = data.u8(24 + stat)
-    fun setEv(stat: Int, value: Int) = data.put8(24 + stat, value.coerceIn(0, 255))
-    val evs: List<Int> get() = (0 until 6).map(::ev)
+    override fun ev(stat: Int): Int = data.u8(24 + stat)
+    override fun setEv(stat: Int, value: Int) = data.put8(24 + stat, value.coerceIn(0, 255))
+    override val evs: List<Int> get() = (0 until 6).map(::ev)
 
     // ---- Misc (substructure 3) ---------------------------------------------------------
 
@@ -129,14 +135,14 @@ class Pk3(raw: ByteArray, val encoding: Pk3Encoding = Pk3Encoding.STANDARD) {
         set(v) = data.put32(40, v)
 
     /** IVs in HP, Atk, Def, Spe, SpA, SpD order. */
-    fun iv(stat: Int): Int = ((ivWord shr (stat * 5)) and 0x1F).toInt()
-    fun setIv(stat: Int, value: Int) {
+    override fun iv(stat: Int): Int = ((ivWord shr (stat * 5)) and 0x1F).toInt()
+    override fun setIv(stat: Int, value: Int) {
         val shift = stat * 5
         ivWord = (ivWord and (0x1FL shl shift).inv()) or (value.coerceIn(0, 31).toLong() shl shift)
     }
-    val ivs: List<Int> get() = (0 until 6).map(::iv)
+    override val ivs: List<Int> get() = (0 until 6).map(::iv)
 
-    var isEgg: Boolean
+    override var isEgg: Boolean
         get() = (ivWord shr 30) and 1L == 1L
         set(v) { ivWord = if (v) ivWord or (1L shl 30) else ivWord and (1L shl 30).inv() }
 
@@ -148,9 +154,9 @@ class Pk3(raw: ByteArray, val encoding: Pk3Encoding = Pk3Encoding.STANDARD) {
     // ---- derived -------------------------------------------------------------------------
 
     /** Nature index 0..24 (Hardy, Lonely, Brave, ...). */
-    val nature: Int get() = (personality % 25).toInt()
+    override val nature: Int get() = (personality % 25).toInt()
 
-    val isShiny: Boolean
+    override val isShiny: Boolean
         get() = (trainerId xor secretId xor (personality shr 16).toInt() xor (personality and 0xFFFF).toInt()) < 8
 
     // ---- party-only fields ---------------------------------------------------------------
