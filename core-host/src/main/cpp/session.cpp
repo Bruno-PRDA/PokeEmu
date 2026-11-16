@@ -1,0 +1,230 @@
+#include "session.h"
+
+#include <android/log.h>
+
+#include <chrono>
+#include <cstdio>
+#include <fstream>
+
+#define TAG "Session"
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
+
+Session* Session::current_ = nullptr;
+
+// mGBA allocates a fixed 128 KiB save buffer (Flash 1M, the largest GBA save
+// type) and may report size 0 until the save type is detected.
+static constexpr size_t kMaxGbaSave = 128 * 1024;
+static constexpr int kFlushIntervalFrames = 120;  // ~2 s
+
+Session* Session::create(const std::string& coreLibrary, const std::string& systemDir, const std::string& saveDir) {
+    if (current_) {
+        LOGE("session already exists");
+        return nullptr;
+    }
+    auto* s = new Session();
+    LibretroCore::Callbacks cb;
+    cb.video = &Session::onVideo;
+    cb.audioBatch = &Session::onAudio;
+    cb.inputState = &Session::onInput;
+    current_ = s;
+    if (!s->core_.open(coreLibrary, systemDir, saveDir, cb)) {
+        current_ = nullptr;
+        delete s;
+        return nullptr;
+    }
+    return s;
+}
+
+Session::~Session() {
+    stop();
+    core_.close();
+    if (current_ == this) current_ = nullptr;
+}
+
+static bool readFile(const std::string& path, std::vector<uint8_t>& out) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return false;
+    out.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    return true;
+}
+
+bool Session::loadGame(const std::vector<uint8_t>& rom, const std::string& savePath) {
+    std::lock_guard<std::mutex> lock(coreMutex_);
+    if (!core_.loadGame(rom)) return false;
+    savePath_ = savePath;
+
+    std::vector<uint8_t> sav;
+    if (!savePath_.empty() && readFile(savePath_, sav) && !sav.empty()) {
+        size_t size = 0;
+        uint8_t* ram = core_.memoryData(RETRO_MEMORY_SAVE_RAM, &size);
+        size_t capacity = size > 0 ? size : kMaxGbaSave;
+        if (ram) {
+            size_t n = std::min(sav.size(), capacity);
+            std::copy(sav.begin(), sav.begin() + n, ram);
+            LOGI("loaded %zu bytes of save RAM from %s", n, savePath_.c_str());
+        }
+        lastSavedRam_ = sav;
+    }
+    return true;
+}
+
+void Session::start() {
+    {
+        std::lock_guard<std::mutex> lock(stateMutex_);
+        if (running_) return;
+        running_ = true;
+        paused_ = false;
+    }
+    audio_.start(core_.avInfo().timing.sample_rate);
+    thread_ = std::thread(&Session::loop, this);
+}
+
+void Session::pause() {
+    {
+        std::lock_guard<std::mutex> lock(stateMutex_);
+        paused_ = true;
+    }
+    audio_.pause();
+    flushSaveRam();
+}
+
+void Session::resume() {
+    {
+        std::lock_guard<std::mutex> lock(stateMutex_);
+        paused_ = false;
+    }
+    audio_.resume();
+    stateCv_.notify_all();
+}
+
+void Session::stop() {
+    {
+        std::lock_guard<std::mutex> lock(stateMutex_);
+        if (!running_) return;
+        running_ = false;
+    }
+    stateCv_.notify_all();
+    if (thread_.joinable()) thread_.join();
+    audio_.stop();
+    flushSaveRam();
+}
+
+void Session::reset() {
+    std::lock_guard<std::mutex> lock(coreMutex_);
+    core_.reset();
+}
+
+void Session::loop() {
+    using clock = std::chrono::steady_clock;
+    const double fps = core_.avInfo().timing.fps > 0 ? core_.avInfo().timing.fps : 60.0;
+    const auto frameTime = std::chrono::duration_cast<clock::duration>(std::chrono::duration<double>(1.0 / fps));
+    auto next = clock::now();
+    int framesSinceFlush = 0;
+
+    while (true) {
+        {
+            std::unique_lock<std::mutex> lock(stateMutex_);
+            if (paused_) {
+                stateCv_.wait(lock, [this] { return !paused_ || !running_; });
+                next = clock::now();
+            }
+            if (!running_) break;
+        }
+
+        const int speed = speed_.load();
+        audioMuted_ = speed > 1;
+        {
+            std::lock_guard<std::mutex> lock(coreMutex_);
+            for (int i = 0; i < speed; ++i) core_.runFrame();
+        }
+        video_.present();
+
+        if (++framesSinceFlush >= kFlushIntervalFrames) {
+            framesSinceFlush = 0;
+            flushSaveRam();
+        }
+
+        next += frameTime;
+        auto now = clock::now();
+        if (next > now) {
+            std::this_thread::sleep_until(next);
+        } else if (now - next > frameTime * 5) {
+            next = now;  // fell far behind (e.g. app was backgrounded): don't spiral
+        }
+    }
+}
+
+bool Session::flushSaveRam(bool force) {
+    std::lock_guard<std::mutex> saveLock(saveMutex_);  // UI thread and emu thread both flush
+    if (savePath_.empty()) return true;
+    std::vector<uint8_t> ram;
+    {
+        std::lock_guard<std::mutex> lock(coreMutex_);
+        size_t size = 0;
+        uint8_t* data = core_.memoryData(RETRO_MEMORY_SAVE_RAM, &size);
+        if (!data || size == 0) return true;  // no save type detected yet
+        ram.assign(data, data + size);
+    }
+    if (!force && ram == lastSavedRam_) return true;
+
+    // Write to a temp file then rename, so a crash never leaves a half-written save.
+    const std::string tmp = savePath_ + ".tmp";
+    {
+        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        if (!out) {
+            LOGE("cannot open %s", tmp.c_str());
+            return false;
+        }
+        out.write(reinterpret_cast<const char*>(ram.data()), static_cast<std::streamsize>(ram.size()));
+        if (!out) return false;
+    }
+    if (std::rename(tmp.c_str(), savePath_.c_str()) != 0) {
+        LOGE("rename to %s failed", savePath_.c_str());
+        return false;
+    }
+    lastSavedRam_ = std::move(ram);
+    return true;
+}
+
+std::vector<uint8_t> Session::saveState() {
+    std::lock_guard<std::mutex> lock(coreMutex_);
+    return core_.serialize();
+}
+
+bool Session::loadState(const std::vector<uint8_t>& state) {
+    bool ok;
+    {
+        std::lock_guard<std::mutex> lock(coreMutex_);
+        ok = core_.unserialize(state);
+    }
+    if (ok) audio_.clear();
+    return ok;
+}
+
+std::vector<uint8_t> Session::readMemory(unsigned region, size_t offset, size_t length) {
+    std::lock_guard<std::mutex> lock(coreMutex_);
+    size_t size = 0;
+    uint8_t* data = core_.memoryData(region, &size);
+    if (!data || offset >= size) return {};
+    length = std::min(length, size - offset);
+    return std::vector<uint8_t>(data + offset, data + offset + length);
+}
+
+// ---- core callbacks (emulation thread) --------------------------------------
+
+void Session::onVideo(const void* data, unsigned w, unsigned h, size_t pitch, retro_pixel_format fmt) {
+    if (current_) current_->video_.submit(data, w, h, pitch, fmt);
+}
+
+size_t Session::onAudio(const int16_t* data, size_t frames) {
+    if (current_ && !current_->audioMuted_) current_->audio_.push(data, frames);
+    return frames;
+}
+
+int16_t Session::onInput(unsigned port, unsigned device, unsigned, unsigned id) {
+    if (!current_ || port != 0 || device != RETRO_DEVICE_JOYPAD) return 0;
+    const uint32_t mask = current_->buttons_.load();
+    if (id == RETRO_DEVICE_ID_JOYPAD_MASK) return static_cast<int16_t>(mask & 0xFFFF);
+    return (mask >> id) & 1 ? 1 : 0;
+}
