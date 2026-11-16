@@ -146,6 +146,9 @@ void Session::loop() {
     const auto frameTime = std::chrono::duration_cast<clock::duration>(std::chrono::duration<double>(1.0 / fps));
     auto next = clock::now();
     int framesSinceFlush = 0;
+    // Speed readout: emulated frames per second, logged every few seconds.
+    auto statsStart = clock::now();
+    int statsFrames = 0;
 
     while (true) {
         {
@@ -164,6 +167,15 @@ void Session::loop() {
             for (int i = 0; i < speed; ++i) core_.runFrame();
         }
         video_.present();
+
+        statsFrames += speed;
+        if (clock::now() - statsStart >= std::chrono::seconds(5)) {
+            const double secs = std::chrono::duration<double>(clock::now() - statsStart).count();
+            LOGI("speed: %.1f fps (target %.1f, %d%%)", statsFrames / secs, fps,
+                 static_cast<int>(100.0 * statsFrames / secs / fps));
+            statsStart = clock::now();
+            statsFrames = 0;
+        }
 
         if (++framesSinceFlush >= kFlushIntervalFrames) {
             framesSinceFlush = 0;

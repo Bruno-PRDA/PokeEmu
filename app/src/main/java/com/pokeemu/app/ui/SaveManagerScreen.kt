@@ -55,6 +55,8 @@ import com.pokeemu.gen3.Gen3Save
 import com.pokeemu.gen3.Gen3SaveException
 import com.pokeemu.saves.GameStorage
 import com.pokeemu.saves.Platform
+import com.pokeemu.gen4.Gen4Save
+import com.pokeemu.gen4.Gen4SaveException
 import com.pokeemu.saves.SaveManager
 import com.pokeemu.saves.romId
 import kotlinx.coroutines.Dispatchers
@@ -72,6 +74,8 @@ private data class SaveState(
     val summary: Result<Gen3Save>?,
     /** DS saves aren't decoded yet (Gen 4/5 tools come later); size in bytes for the card. */
     val dsSaveSize: Long? = null,
+    /** Gen 4 summary for DS saves (null when not a DS save). */
+    val gen4: Result<Gen4Save>? = null,
 )
 
 /** A confirmation the user must accept before something replaces their save. */
@@ -101,6 +105,7 @@ fun SaveManagerScreen(rom: RomEntry, onBack: () -> Unit, onEditPokemon: () -> Un
                 hasSave = m.hasSave,
                 summary = if (m.hasSave && !isDs) runCatching { Gen3Save.parse(m.saveFile.readBytes()) } else null,
                 dsSaveSize = if (m.hasSave && isDs) m.saveFile.length() else null,
+                gen4 = if (m.hasSave && isDs) runCatching { Gen4Save.parse(m.saveFile.readBytes()) } else null,
             )
         }
     }
@@ -252,9 +257,34 @@ private fun SummaryCard(s: SaveState, onEditPokemon: () -> Unit) {
             val summary = s.summary
             when {
                 !s.hasSave -> Text("No save yet — play the game and save in-game.")
+                s.gen4?.isSuccess == true -> {
+                    val save = s.gen4.getOrThrow()
+                    val t = save.trainer
+                    Text(t.name.ifEmpty { "(no name)" }, style = MaterialTheme.typography.titleLarge)
+                    Text("${save.game.label} · ID %05d".format(t.trainerId))
+                    Text("₽%,d".format(t.money))
+                    if (save.party.isNotEmpty()) {
+                        Text("Party", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 8.dp))
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            for (pk in save.party) {
+                                AssistChip(onClick = {}, label = {
+                                    Text(buildString {
+                                        append(if (pk.isEgg) "Egg" else pk.nickname.ifBlank { "#${pk.species}" })
+                                        pk.level?.let { append(" Lv$it") }
+                                        if (pk.isShiny) append(" ★")
+                                    })
+                                })
+                            }
+                        }
+                    }
+                    Text("Gen 4 editing comes later.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
+                }
                 s.dsSaveSize != null -> {
                     Text("Nintendo DS save", style = MaterialTheme.typography.titleMedium)
-                    Text("%,d KB · backups, slots and import/export work; Gen 4/5 editing comes later".format(s.dsSaveSize / 1024))
+                    Text("%,d KB · backups, slots and import/export work".format(s.dsSaveSize / 1024))
+                    (s.gen4?.exceptionOrNull() as? Gen4SaveException)?.let {
+                        Text("Not readable as Gen 4: ${it.message}", style = MaterialTheme.typography.bodySmall)
+                    }
                 }
                 summary == null -> Unit
                 summary.isFailure -> {
