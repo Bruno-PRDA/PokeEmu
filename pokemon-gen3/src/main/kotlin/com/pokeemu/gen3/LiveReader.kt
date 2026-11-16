@@ -1,7 +1,6 @@
 package com.pokeemu.gen3
 
-/** What the overlay shows: your party and the opponent's, straight from game RAM. */
-data class LiveState(val party: List<Pk3>, val opponents: List<Pk3>)
+import com.pokeemu.core.LiveState
 
 /**
  * Finds the player's and the opponent's party in a Gen 3 game's EWRAM without

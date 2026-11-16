@@ -36,8 +36,11 @@ import com.pokeemu.saves.RomHeader
 import com.pokeemu.app.ui.PadLayouts
 import com.pokeemu.gen3.Gen3Game
 import com.pokeemu.gen3.Gen3Save
+import com.pokeemu.core.GameData
+import com.pokeemu.core.LiveState
 import com.pokeemu.gen3.LiveReader
-import com.pokeemu.gen3.LiveState
+import com.pokeemu.gen4.Gen4LiveReader
+import com.pokeemu.gen4.Gen4Save
 import com.pokeemu.gen3.RomData
 import com.pokeemu.app.ui.OverlayPanel
 import kotlinx.coroutines.Job
@@ -66,8 +69,10 @@ class PlayerActivity : ComponentActivity() {
     // Battle overlay
     private var overlayOpen by mutableStateOf(false)
     private var liveState by mutableStateOf<LiveState?>(null)
-    private var romData by mutableStateOf<RomData?>(null)
-    private var liveReader: LiveReader? = null
+    private var romData by mutableStateOf<GameData?>(null)
+    /** Reads the overlay state from a RAM snapshot; set once game data is ready. */
+    private var liveReader: ((ByteArray) -> LiveState?)? = null
+    private var liveRam: Pair<Long, Int> = EmulatorSession.GBA_EWRAM to EmulatorSession.GBA_EWRAM_SIZE
     private var isDs by mutableStateOf(false)
     private var overlayJob: Job? = null
 
@@ -101,8 +106,7 @@ class PlayerActivity : ComponentActivity() {
                     onToggleFastForward = ::toggleFastForward,
                     onOpenMenu = { showDialog(Dialog.MENU) },
                     overlayOpen = overlayOpen,
-                    // The battle overlay reads Gen 3 memory, so it is GBA-only for now.
-                    onToggleOverlay = if (isDs) null else ::toggleOverlay,
+                    onToggleOverlay = ::toggleOverlay,
                     overlay = { mod -> OverlayPanel(liveState, romData, mod) },
                     aspect = if (isDs) 256f / 384f else 3f / 2f,
                     portraitPad = if (isDs) PadLayouts.dsPortrait else PadLayouts.portrait,
@@ -160,7 +164,8 @@ class PlayerActivity : ComponentActivity() {
             session!!.start()
             ready = true
             if (storage.readState(id, GameStorage.AUTO_SLOT) != null) showDialog(Dialog.RESUME_PROMPT)
-            if (!isDs) prepareOverlay(id, withContext(Dispatchers.IO) { local.file.readBytes() }) // GBA: <= 32 MB
+            if (isDs) prepareDsOverlay(id, local.file)
+            else prepareOverlay(id, withContext(Dispatchers.IO) { local.file.readBytes() }) // GBA: <= 32 MB
         } catch (e: Exception) {
             error = "Could not start the game:\n${e.message}"
         }
@@ -190,7 +195,26 @@ class PlayerActivity : ComponentActivity() {
                     encoding = save?.pkEncoding,
                     speciesCount = data?.speciesNames?.size?.takeIf { it > 0 } ?: 2048,
                     moveCount = data?.moveNames?.size?.takeIf { it > 0 } ?: 1024,
-                )
+                )::read
+            }
+        }
+    }
+
+    /** DS: names/base stats from the ROM, trainer IDs from the save, parties from main RAM. */
+    private fun prepareDsOverlay(id: String, romFile: java.io.File) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            val data = RomDataStore(storage).gen4(id, romFile)
+            val trainer = runCatching { Gen4Save.parse(storage.saveFile(id).readBytes()).trainer }.getOrNull()
+            val reader = Gen4LiveReader(
+                trainerId = trainer?.trainerId,
+                secretId = trainer?.secretId,
+                speciesCount = data?.speciesNames?.size?.takeIf { it > 0 } ?: 2048,
+                moveCount = data?.moveNames?.size?.takeIf { it > 0 } ?: 1024,
+            )
+            withContext(Dispatchers.Main) {
+                romData = data
+                liveRam = Gen4LiveReader.RAM_ADDRESS to Gen4LiveReader.RAM_SIZE
+                liveReader = reader::read
             }
         }
     }
@@ -205,7 +229,7 @@ class PlayerActivity : ComponentActivity() {
                 val reader = liveReader
                 if (s != null && reader != null) {
                     liveState = withContext(Dispatchers.Default) {
-                        s.readBus(EmulatorSession.GBA_EWRAM, EmulatorSession.GBA_EWRAM_SIZE)?.let(reader::read)
+                        s.readBus(liveRam.first, liveRam.second)?.let(reader)
                     }
                 }
                 delay(OVERLAY_REFRESH_MS)

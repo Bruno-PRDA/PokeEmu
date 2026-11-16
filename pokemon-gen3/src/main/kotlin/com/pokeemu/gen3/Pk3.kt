@@ -1,5 +1,6 @@
 package com.pokeemu.gen3
 
+import com.pokeemu.core.BaseStats
 import com.pokeemu.core.Mon
 
 /** How the 48 data bytes of a Pokémon record are stored. */
@@ -161,9 +162,11 @@ class Pk3(raw: ByteArray, val encoding: Pk3Encoding = Pk3Encoding.STANDARD) : Mo
 
     // ---- party-only fields ---------------------------------------------------------------
 
-    val level: Int? get() = if (isParty) bytes.u8(0x54) else null
-    val currentHp: Int? get() = if (isParty) bytes.u16(0x56) else null
-    val maxHp: Int? get() = if (isParty) bytes.u16(0x58) else null
+    override val level: Int? get() = if (isParty) bytes.u8(0x54) else null
+    override val currentHp: Int? get() = if (isParty) bytes.u16(0x56) else null
+    override val maxHp: Int? get() = if (isParty) bytes.u16(0x58) else null
+
+    override fun abilityId(base: BaseStats?): Int? = base?.let { if (abilitySlot == 1 && it.ability2 != 0) it.ability2 else it.ability1 }
     /** Party stats in HP, Atk, Def, Spe, SpA, SpD order. */
     val partyStats: List<Int>? get() = if (isParty) List(6) { bytes.u16(0x58 + it * 2) } else null
 

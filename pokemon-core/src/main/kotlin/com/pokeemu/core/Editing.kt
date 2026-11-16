@@ -67,8 +67,17 @@ interface Mon {
     fun setEv(stat: Int, value: Int)
     val ivs: List<Int> get() = (0 until 6).map(::iv)
     val evs: List<Int> get() = (0 until 6).map(::ev)
+    /** Party-only fields (null for PC records). */
+    val level: Int?
+    val currentHp: Int?
+    val maxHp: Int?
+    /** The ability id this Pokémon has, given its species' base data; null if it can't be told. */
+    fun abilityId(base: BaseStats?): Int?
     fun copy(): Mon
 }
+
+/** What the battle overlay shows: your party and the opponent's, straight from game RAM. */
+data class LiveState(val party: List<Mon>, val opponents: List<Mon>)
 
 /**
  * Editable view of a save's Pokémon. Changes stay in memory until [toBytes];

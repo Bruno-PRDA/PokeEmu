@@ -24,9 +24,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.pokeemu.gen3.LiveState
-import com.pokeemu.gen3.Pk3
-import com.pokeemu.gen3.RomData
+import com.pokeemu.core.GameData
+import com.pokeemu.core.LiveState
+import com.pokeemu.core.Mon
 
 private val Dim = Color.White.copy(alpha = 0.65f)
 private val IV_LABELS = listOf("HP", "Atk", "Def", "Spe", "SpA", "SpD")
@@ -36,7 +36,7 @@ private val IV_LABELS = listOf("HP", "Atk", "Def", "Spe", "SpA", "SpD")
  * [rom] null = game data not loaded yet (numbers are shown instead of names).
  */
 @Composable
-fun OverlayPanel(state: LiveState?, rom: RomData?, modifier: Modifier = Modifier) {
+fun OverlayPanel(state: LiveState?, rom: GameData?, modifier: Modifier = Modifier) {
     Column(
         modifier
             .background(Color(0xE6101418), RoundedCornerShape(12.dp))
@@ -62,13 +62,13 @@ fun OverlayPanel(state: LiveState?, rom: RomData?, modifier: Modifier = Modifier
 @Composable
 private fun SectionLabel(text: String) = Text(text.uppercase(), color = Color(0xFFEF9A9A), fontSize = 11.sp, fontWeight = FontWeight.Bold)
 
-private fun name(pk: Pk3, rom: RomData?) = when {
+private fun name(pk: Mon, rom: GameData?) = when {
     pk.isEgg -> "Egg"
     rom != null -> rom.speciesName(pk.species)
     else -> "#${pk.species}"
 }
 
-private fun genderSymbol(pk: Pk3, rom: RomData?): String {
+private fun genderSymbol(pk: Mon, rom: GameData?): String {
     val ratio = rom?.base(pk.species)?.genderRatio ?: return ""
     return when (GameRules.gender(pk.personality, ratio)) {
         Gender.MALE -> " ♂"
@@ -78,7 +78,7 @@ private fun genderSymbol(pk: Pk3, rom: RomData?): String {
 }
 
 @Composable
-private fun OpponentCard(pk: Pk3, rom: RomData?) {
+private fun OpponentCard(pk: Mon, rom: GameData?) {
     val base = rom?.base(pk.species)
     Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -89,12 +89,12 @@ private fun OpponentCard(pk: Pk3, rom: RomData?) {
             Text("Lv${pk.level}", color = Color.White, fontSize = 14.sp)
         }
         HpBar(pk)
-        val ability = base?.let { if (pk.abilitySlot == 1 && it.ability2 != 0) it.ability2 else it.ability1 }
+        val ability = pk.abilityId(base)
         Text(
             listOfNotNull(
-                Pk3.NATURES[pk.nature],
-                ability?.let { rom.abilityName(it) },
-                base?.let { RomData.typeName(it.type1) + if (it.type2 != it.type1) "/" + RomData.typeName(it.type2) else "" },
+                GameData.NATURES[pk.nature],
+                ability?.let { rom?.abilityName(it) },
+                base?.let { rom.typeName(it.type1) + if (it.type2 != it.type1) "/" + rom.typeName(it.type2) else "" },
             ).joinToString(" · "),
             color = Dim, fontSize = 12.sp,
         )
@@ -115,7 +115,7 @@ private fun OpponentCard(pk: Pk3, rom: RomData?) {
 }
 
 @Composable
-private fun PartyRow(pk: Pk3, rom: RomData?) {
+private fun PartyRow(pk: Mon, rom: GameData?) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
             name(pk, rom), color = Color.White, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
@@ -127,7 +127,7 @@ private fun PartyRow(pk: Pk3, rom: RomData?) {
 }
 
 @Composable
-private fun HpBar(pk: Pk3) {
+private fun HpBar(pk: Mon) {
     val hp = pk.currentHp ?: 0
     val max = (pk.maxHp ?: 1).coerceAtLeast(1)
     val fraction = hp.toFloat() / max

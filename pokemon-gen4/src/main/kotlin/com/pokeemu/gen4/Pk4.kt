@@ -1,5 +1,6 @@
 package com.pokeemu.gen4
 
+import com.pokeemu.core.BaseStats
 import com.pokeemu.core.GameData
 import com.pokeemu.core.Mon
 
@@ -115,9 +116,13 @@ class Pk4(raw: ByteArray) : Mon {
     override val isShiny get() = (trainerId xor secretId xor (personality shr 16).toInt() xor (personality and 0xFFFF).toInt()) < 8
 
     // ---- party-only ----
-    val level: Int? get() = if (isParty) plain.u8(0x8C) else null
-    val currentHp: Int? get() = if (isParty) plain.u16(0x8E) else null
-    val maxHp: Int? get() = if (isParty) plain.u16(0x90) else null
+    override val level: Int? get() = if (isParty) plain.u8(0x8C) else null
+    override val currentHp: Int? get() = if (isParty) plain.u16(0x8E) else null
+    override val maxHp: Int? get() = if (isParty) plain.u16(0x90) else null
+
+    /** Gen 4 stores the id itself; hacks that store something else (a slot) give null. */
+    override fun abilityId(base: BaseStats?): Int? =
+        ability.takeIf { base == null || it == base.ability1 || (it != 0 && it == base.ability2) }
     val partyStats: List<Int>? get() = if (isParty) List(6) { plain.u16(0x90 + it * 2) } else null
 
     /** Writes level and stats (HP, Atk, Def, Spe, SpA, SpD), keeping HP lost to damage. */
