@@ -29,6 +29,7 @@ import com.pokeemu.app.ui.StateSlotsDialog
 import com.pokeemu.core.Button
 import com.pokeemu.core.EmulatorSession
 import com.pokeemu.saves.GameStorage
+import com.pokeemu.saves.SaveManager
 import com.pokeemu.saves.romId
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -114,6 +115,8 @@ class PlayerActivity : ComponentActivity() {
             val rom = withContext(Dispatchers.IO) { RomLibrary(this@PlayerActivity).readRom(uri) }
             val id = romId(rom)
             gameId = id
+            // Daily safety net before the game can touch the save.
+            withContext(Dispatchers.IO) { runCatching { SaveManager(storage, id).dailyBackupIfDue() } }
             session = withContext(Dispatchers.IO) {
                 EmulatorSession.open(
                     coreLibrary = EmulatorSession.GBA_CORE,

@@ -2,6 +2,7 @@
 
 #include <android/log.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <fstream>
@@ -167,6 +168,12 @@ bool Session::flushSaveRam(bool force) {
         ram.assign(data, data + size);
     }
     if (!force && ram == lastSavedRam_) return true;
+    // No save file yet and the RAM is still blank: the game never saved, so don't create one.
+    if (lastSavedRam_.empty() &&
+        std::all_of(ram.begin(), ram.end(), [&](uint8_t b) { return b == ram[0]; }) &&
+        (ram[0] == 0xFF || ram[0] == 0x00)) {
+        return true;
+    }
 
     // Write to a temp file then rename, so a crash never leaves a half-written save.
     const std::string tmp = savePath_ + ".tmp";

@@ -34,6 +34,7 @@ android {
 dependencies {
     implementation(project(":core-host"))
     implementation(project(":saves"))
+    implementation(project(":pokemon-gen3"))
 
     implementation(platform("androidx.compose:compose-bom:2024.12.01"))
     implementation("androidx.compose.ui:ui")

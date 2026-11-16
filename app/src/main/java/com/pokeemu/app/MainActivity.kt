@@ -4,6 +4,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.LaunchedEffect
@@ -13,6 +14,7 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.lifecycleScope
 import com.pokeemu.app.ui.LibraryScreen
 import com.pokeemu.app.ui.PokeEmuTheme
+import com.pokeemu.app.ui.SaveManagerScreen
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -21,6 +23,7 @@ class MainActivity : ComponentActivity() {
     private var roms by mutableStateOf<List<RomEntry>>(emptyList())
     private var loading by mutableStateOf(false)
     private var hasFolder by mutableStateOf(false)
+    private var managingSaves by mutableStateOf<RomEntry?>(null)
 
     private val pickFolder = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
         if (uri != null) {
@@ -38,6 +41,11 @@ class MainActivity : ComponentActivity() {
         setContent {
             PokeEmuTheme {
                 LaunchedEffect(Unit) { if (hasFolder) rescan() }
+                managingSaves?.let { rom ->
+                    BackHandler { managingSaves = null }
+                    SaveManagerScreen(rom, onBack = { managingSaves = null })
+                    return@PokeEmuTheme
+                }
                 LibraryScreen(
                     roms = roms,
                     hasFolder = hasFolder,
@@ -45,6 +53,7 @@ class MainActivity : ComponentActivity() {
                     onPickFolder = { pickFolder.launch(library.folder) },
                     onRefresh = ::rescan,
                     onOpen = { rom -> startActivity(PlayerActivity.intent(this, rom.uri, rom.fileName)) },
+                    onManageSaves = { managingSaves = it },
                 )
             }
         }

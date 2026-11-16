@@ -6,9 +6,11 @@ import java.io.File
  * On-disk layout for everything the app stores per game:
  *
  * ```
- * <root>/games/<romId>/game.sav         battery save (written by the emulator)
- * <root>/games/<romId>/states/<n>.state save state, slot n (0 = auto)
- * <root>/games/<romId>/states/<n>.png   thumbnail for slot n
+ * <root>/games/<romId>/game.sav                     battery save of the active slot (the emulator reads/writes this)
+ * <root>/games/<romId>/active-slot                  name of the active save slot
+ * <root>/games/<romId>/slots/<slot>.sav             parked saves of inactive slots
+ * <root>/games/<romId>/states/<slot>/<n>.state|png  save states, per save slot (n = 0 is the auto state)
+ * <root>/games/<romId>/backups/<millis>-<reason>.sav  backups (+ .pin marker to keep forever)
  * ```
  */
 class GameStorage(private val root: File) {
@@ -16,6 +18,17 @@ class GameStorage(private val root: File) {
     fun gameDir(romId: String): File = File(root, "games/$romId").apply { mkdirs() }
 
     fun saveFile(romId: String): File = File(gameDir(romId), "game.sav")
+
+    fun slotsDir(romId: String): File = File(gameDir(romId), "slots").apply { mkdirs() }
+
+    fun backupsDir(romId: String): File = File(gameDir(romId), "backups").apply { mkdirs() }
+
+    private fun activeSlotFile(romId: String) = File(gameDir(romId), "active-slot")
+
+    fun activeSlot(romId: String): String =
+        activeSlotFile(romId).takeIf { it.isFile }?.readText()?.trim()?.takeIf { it.isNotEmpty() } ?: DEFAULT_SLOT
+
+    fun setActiveSlot(romId: String, slot: String) = writeAtomically(activeSlotFile(romId), slot.toByteArray())
 
     fun stateFile(romId: String, slot: Int): File = File(statesDir(romId), "$slot.state")
 
@@ -36,7 +49,19 @@ class GameStorage(private val root: File) {
 
     fun readState(romId: String, slot: Int): ByteArray? = stateFile(romId, slot).takeIf { it.isFile }?.readBytes()
 
-    private fun statesDir(romId: String) = File(gameDir(romId), "states").apply { mkdirs() }
+    /**
+     * Deletes the auto state of the active save slot. Needed whenever the save
+     * file changes outside the game: the auto state holds the *old* save in the
+     * game's RAM and would write it back on the next in-game save.
+     */
+    fun invalidateAutoState(romId: String) {
+        stateFile(romId, AUTO_SLOT).delete()
+        thumbnailFile(romId, AUTO_SLOT).delete()
+    }
+
+    /** States of the active save slot. */
+    private fun statesDir(romId: String) =
+        File(gameDir(romId), "states/${activeSlot(romId)}").apply { mkdirs() }
 
     data class StateSlot(val slot: Int, val modifiedAt: Long, val thumbnail: File?)
 
@@ -44,6 +69,7 @@ class GameStorage(private val root: File) {
         /** Slot 0 is the automatic "on exit" state; 1..10 are manual. */
         const val AUTO_SLOT = 0
         const val MAX_SLOT = 10
+        const val DEFAULT_SLOT = "Main"
 
         fun writeAtomically(target: File, bytes: ByteArray) {
             target.parentFile?.mkdirs()

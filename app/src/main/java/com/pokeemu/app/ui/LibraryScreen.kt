@@ -11,6 +11,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Save
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -38,6 +39,7 @@ fun LibraryScreen(
     onPickFolder: () -> Unit,
     onRefresh: () -> Unit,
     onOpen: (RomEntry) -> Unit,
+    onManageSaves: (RomEntry) -> Unit,
 ) {
     Scaffold(
         topBar = {
@@ -61,6 +63,9 @@ fun LibraryScreen(
                         ListItem(
                             headlineContent = { Text(rom.fileName.substringBeforeLast('.')) },
                             supportingContent = { Text("${rom.header.title} · ${rom.header.gameCode}") },
+                            trailingContent = {
+                                IconButton(onClick = { onManageSaves(rom) }) { Icon(Icons.Default.Save, "Manage saves") }
+                            },
                             modifier = Modifier.clickable { onOpen(rom) },
                         )
                         HorizontalDivider()
