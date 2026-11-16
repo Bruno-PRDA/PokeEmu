@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -55,6 +56,9 @@ import java.util.Date
  * Surface the native side draws into. [onTouch] (DS touchscreen) receives
  * touches as fractions of the surface, which matches the video frame.
  */
+/** The surface the native side currently draws into (one game screen at a time). */
+@Volatile private var currentSurface: android.view.Surface? = null
+
 @android.annotation.SuppressLint("ClickableViewAccessibility")
 @Composable
 fun GameSurface(
@@ -76,10 +80,19 @@ fun GameSurface(
                 }
                 holder.addCallback(object : SurfaceHolder.Callback {
                     override fun surfaceCreated(holder: SurfaceHolder) {}
-                    override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) =
+                    override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
+                        currentSurface = holder.surface
                         onSurface(holder.surface)
+                    }
 
-                    override fun surfaceDestroyed(holder: SurfaceHolder) = onSurface(null)
+                    // When the layout changes, a new SurfaceView can be ready before the old one
+                    // is destroyed; only detach if the destroyed surface is still the one in use.
+                    override fun surfaceDestroyed(holder: SurfaceHolder) {
+                        if (currentSurface === holder.surface) {
+                            currentSurface = null
+                            onSurface(null)
+                        }
+                    }
                 })
             }
         },
@@ -129,13 +142,17 @@ fun PlayerScreen(
             if (overlayOpen) overlay(Modifier.align(Alignment.TopCenter).padding(top = 48.dp).width(360.dp).heightIn(max = 280.dp))
         } else {
             Column(Modifier.fillMaxSize()) {
-                if (aspect >= 1f) {
-                    GameSurface(onSurface, aspect, Modifier.fillMaxWidth(), onTouch = onTouch)
-                } else {
-                    // Tall (DS) frame: limit its height so the controls still fit.
-                    Box(Modifier.fillMaxWidth().fillMaxHeight(0.62f), contentAlignment = Alignment.TopCenter) {
-                        GameSurface(onSurface, aspect, Modifier.fillMaxHeight(), matchHeight = true, onTouch = onTouch)
-                    }
+                // One call site, so changing the DS layout resizes the same SurfaceView instead
+                // of replacing it. Tall (DS) frames are height-limited so the controls still fit.
+                val tall = aspect < 1f
+                Box(
+                    Modifier.fillMaxWidth().then(if (tall) Modifier.fillMaxHeight(0.62f) else Modifier),
+                    contentAlignment = Alignment.TopCenter,
+                ) {
+                    GameSurface(
+                        onSurface, aspect, if (tall) Modifier.fillMaxHeight() else Modifier.fillMaxWidth(),
+                        matchHeight = tall, onTouch = onTouch,
+                    )
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) { toolButtons() }
                 if (overlayOpen) overlay(Modifier.fillMaxWidth().padding(horizontal = 8.dp).heightIn(max = 260.dp))
@@ -156,6 +173,7 @@ fun LoadingScreen(message: String?) {
 }
 
 /** Pause menu. */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun PauseMenu(
     speed: Int,
@@ -165,6 +183,9 @@ fun PauseMenu(
     onReset: () -> Unit,
     onQuit: () -> Unit,
     onDismiss: () -> Unit,
+    /** DS only: current screen layout (null hides the picker). */
+    dsLayout: DsLayout? = null,
+    onDsLayout: (DsLayout) -> Unit = {},
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -178,6 +199,14 @@ fun PauseMenu(
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     for (s in listOf(2, 3, 4, 8)) {
                         FilterChip(selected = speed == s, onClick = { onSpeed(s) }, label = { Text("${s}×") })
+                    }
+                }
+                if (dsLayout != null) {
+                    Text("Screens", style = MaterialTheme.typography.labelLarge)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        for (l in DsLayout.entries) {
+                            FilterChip(selected = dsLayout == l, onClick = { onDsLayout(l) }, label = { Text(l.label) })
+                        }
                     }
                 }
                 FilledTonalButton(onClick = onReset, Modifier.fillMaxWidth()) { Text("Reset game") }

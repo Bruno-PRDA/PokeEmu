@@ -1,5 +1,16 @@
 #include "libretro_core.h"
 
+#include <atomic>
+#include <map>
+#include <mutex>
+
+namespace {
+// Core options set by the app; values must stay alive while the core reads them.
+std::mutex gVariablesMutex;
+std::map<std::string, std::string> gVariables;
+std::atomic<bool> gVariablesDirty{false};
+}  // namespace
+
 #include <android/log.h>
 #include <dlfcn.h>
 
@@ -161,6 +172,14 @@ uint8_t* LibretroCore::busAddress(uint32_t address, size_t* available) {
 
 // ---- static callbacks -------------------------------------------------------
 
+void LibretroCore::setVariable(const std::string& key, const std::string& value) {
+    std::lock_guard<std::mutex> lock(gVariablesMutex);
+    auto it = gVariables.find(key);
+    if (it != gVariables.end() && it->second == value) return;
+    gVariables[key] = value;
+    gVariablesDirty.store(true);
+}
+
 bool LibretroCore::environment(unsigned cmd, void* data) {
     LibretroCore* self = active_;
     if (!self) return false;
@@ -186,8 +205,17 @@ bool LibretroCore::environment(unsigned cmd, void* data) {
         case RETRO_ENVIRONMENT_GET_LOG_INTERFACE:
             static_cast<retro_log_callback*>(data)->log = &LibretroCore::log;
             return true;
+        case RETRO_ENVIRONMENT_GET_VARIABLE: {
+            auto* var = static_cast<retro_variable*>(data);
+            if (!var || !var->key) return false;
+            std::lock_guard<std::mutex> lock(gVariablesMutex);
+            auto it = gVariables.find(var->key);
+            if (it == gVariables.end()) return false;  // core uses its default
+            var->value = it->second.c_str();
+            return true;
+        }
         case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE:
-            *static_cast<bool*>(data) = false;
+            *static_cast<bool*>(data) = gVariablesDirty.exchange(false);
             return true;
         case RETRO_ENVIRONMENT_GET_INPUT_BITMASKS:
             return true;

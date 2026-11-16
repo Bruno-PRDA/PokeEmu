@@ -74,6 +74,9 @@ class EmulatorSession private constructor() {
     companion object {
         const val GBA_CORE = "libmgba_libretro.so"
         const val NDS_CORE = "libmelondsds_libretro.so"
+        /** Sets a libretro core option (e.g. melonDS screen layout); works before or during a game. */
+        fun setCoreOption(key: String, value: String) = NativeBridge.nativeSetVariable(key, value)
+
         const val GBA_EWRAM = 0x02000000L
         const val GBA_EWRAM_SIZE = 0x40000
 

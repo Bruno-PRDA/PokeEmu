@@ -46,6 +46,10 @@ public:
     // the bytes available from there in *available. nullptr if unmapped.
     uint8_t* busAddress(uint32_t address, size_t* available);
 
+    // Core options (e.g. melonDS screen layout). Process-global so they can be set
+    // before a game loads; the core sees changes through GET_VARIABLE_UPDATE.
+    static void setVariable(const std::string& key, const std::string& value);
+
 private:
     template <typename T> bool sym(T& fn, const char* name);
     static bool environment(unsigned cmd, void* data);

@@ -37,6 +37,9 @@ private val IV_LABELS = listOf("HP", "Atk", "Def", "Spe", "SpA", "SpD")
  */
 @Composable
 fun OverlayPanel(state: LiveState?, rom: GameData?, modifier: Modifier = Modifier) {
+    // Only the opponent is shown; outside battle the panel stays out of the way.
+    val opponents = state?.opponents.orEmpty()
+    if (opponents.isEmpty()) return
     Column(
         modifier
             .background(Color(0xE6101418), RoundedCornerShape(12.dp))
@@ -44,18 +47,8 @@ fun OverlayPanel(state: LiveState?, rom: GameData?, modifier: Modifier = Modifie
             .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        if (state == null) {
-            Text("Looking for your party in the game's memory…", color = Dim, fontSize = 13.sp)
-            return@Column
-        }
-        if (state.opponents.isNotEmpty()) {
-            SectionLabel("Opponent")
-            state.opponents.forEach { OpponentCard(it, rom) }
-        } else {
-            Text("No opponent — start a battle to see its stats.", color = Dim, fontSize = 13.sp)
-        }
-        SectionLabel("Your party")
-        state.party.forEach { PartyRow(it, rom) }
+        SectionLabel("Opponent")
+        opponents.forEach { OpponentCard(it, rom) }
     }
 }
 
@@ -111,18 +104,6 @@ private fun OpponentCard(pk: Mon, rom: GameData?) {
         }
         val moves = pk.moves.filter { it != 0 }.map { rom?.moveName(it) ?: "#$it" }
         if (moves.isNotEmpty()) Text(moves.joinToString(" · "), color = Color.White, fontSize = 12.sp)
-    }
-}
-
-@Composable
-private fun PartyRow(pk: Mon, rom: GameData?) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(
-            name(pk, rom), color = Color.White, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.width(96.dp),
-        )
-        Text("Lv${pk.level}", color = Dim, fontSize = 12.sp, modifier = Modifier.width(40.dp))
-        Box(Modifier.weight(1f)) { HpBar(pk) }
     }
 }
 

@@ -18,6 +18,7 @@ internal object NativeBridge {
     external fun nativeSetButtons(mask: Int)
     external fun nativeSetSpeed(multiplier: Int)
     external fun nativeSetPointer(x: Int, y: Int, pressed: Boolean)
+    external fun nativeSetVariable(key: String, value: String)
     external fun nativeReset()
     external fun nativeSaveState(): ByteArray?
     external fun nativeLoadState(state: ByteArray): Boolean

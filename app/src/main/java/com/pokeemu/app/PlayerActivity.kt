@@ -42,6 +42,7 @@ import com.pokeemu.gen3.LiveReader
 import com.pokeemu.gen4.Gen4LiveReader
 import com.pokeemu.gen4.Gen4Save
 import com.pokeemu.gen3.RomData
+import com.pokeemu.app.ui.DsLayout
 import com.pokeemu.app.ui.OverlayPanel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -64,6 +65,8 @@ class PlayerActivity : ComponentActivity() {
     private var dialog by mutableStateOf(Dialog.NONE)
     private var fastForward by mutableStateOf(false)
     private var ffSpeed by mutableStateOf(3)
+    private val prefs by lazy { getSharedPreferences("player", MODE_PRIVATE) }
+    private var dsLayout by mutableStateOf(DsLayout.TOP_BOTTOM)
     private var stateSlots by mutableStateOf<List<GameStorage.StateSlot>>(emptyList())
 
     // Battle overlay
@@ -108,7 +111,7 @@ class PlayerActivity : ComponentActivity() {
                     overlayOpen = overlayOpen,
                     onToggleOverlay = ::toggleOverlay,
                     overlay = { mod -> OverlayPanel(liveState, romData, mod) },
-                    aspect = if (isDs) 256f / 384f else 3f / 2f,
+                    aspect = if (isDs) dsLayout.aspect else 3f / 2f,
                     portraitPad = if (isDs) PadLayouts.dsPortrait else PadLayouts.portrait,
                     landscapePad = if (isDs) PadLayouts.dsLandscape else PadLayouts.landscape,
                     onTouch = if (isDs) { x, y, down -> session?.setTouch(x, y, down) } else null,
@@ -122,6 +125,12 @@ class PlayerActivity : ComponentActivity() {
                         onReset = { session?.reset(); showDialog(Dialog.NONE) },
                         onQuit = { finish() },
                         onDismiss = { showDialog(Dialog.NONE) },
+                        dsLayout = if (isDs) dsLayout else null,
+                        onDsLayout = { l ->
+                            dsLayout = l
+                            l.apply()
+                            prefs.edit().putString(PREF_DS_LAYOUT, l.name).apply()
+                        },
                     )
                     Dialog.SAVE_STATE, Dialog.LOAD_STATE -> StateSlotsDialog(
                         saving = dialog == Dialog.SAVE_STATE,
@@ -151,6 +160,10 @@ class PlayerActivity : ComponentActivity() {
                 local.file.inputStream().use { input -> ByteArray(NdsHeader.HEADER_SIZE).also { input.read(it) } }
             }
             isDs = NdsHeader.parse(header) != null
+            if (isDs) {
+                dsLayout = DsLayout.fromName(prefs.getString(PREF_DS_LAYOUT, null))
+                dsLayout.apply() // before load, so the first frame already uses it
+            }
             // Daily safety net before the game can touch the save.
             withContext(Dispatchers.IO) { runCatching { SaveManager(storage, id).dailyBackupIfDue() } }
             session = withContext(Dispatchers.IO) {
@@ -357,6 +370,7 @@ class PlayerActivity : ComponentActivity() {
     private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
 
     companion object {
+        private const val PREF_DS_LAYOUT = "ds_layout"
         private const val EXTRA_URI = "uri"
         private const val OVERLAY_REFRESH_MS = 500L
         private const val EXTRA_NAME = "name"

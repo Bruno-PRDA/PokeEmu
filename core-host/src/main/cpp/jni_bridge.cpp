@@ -76,6 +76,14 @@ JNI_FN(void, nativeSetPointer)(JNIEnv*, jobject, jint x, jint y, jboolean presse
     if (gSession) gSession->setPointer(x, y, pressed == JNI_TRUE);
 }
 
+JNI_FN(void, nativeSetVariable)(JNIEnv* env, jobject, jstring key, jstring value) {
+    const char* k = env->GetStringUTFChars(key, nullptr);
+    const char* v = env->GetStringUTFChars(value, nullptr);
+    LibretroCore::setVariable(k, v);
+    env->ReleaseStringUTFChars(key, k);
+    env->ReleaseStringUTFChars(value, v);
+}
+
 JNI_FN(void, nativeSetSpeed)(JNIEnv*, jobject, jint multiplier) {
     if (gSession) gSession->setSpeed(multiplier);
 }
