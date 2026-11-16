@@ -25,8 +25,9 @@ public:
     // dlopen()s the core and calls retro_init().
     bool open(const std::string& libraryName, const std::string& systemDir, const std::string& saveDir,
               const Callbacks& callbacks);
-    // Loads ROM bytes (the core must not need a full path).
-    bool loadGame(const std::vector<uint8_t>& rom);
+    // Loads a ROM from memory; [path] (may be empty) is passed along for cores that use it for naming.
+    // [data] must stay valid until close().
+    bool loadGame(const void* data, size_t size, const std::string& path);
     void runFrame();
     void reset();
     // Unloads the game and core.

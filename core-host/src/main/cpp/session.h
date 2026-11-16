@@ -18,8 +18,9 @@ public:
     static Session* create(const std::string& coreLibrary, const std::string& systemDir, const std::string& saveDir);
     ~Session();
 
-    // Loads the ROM; if savePath exists its contents are copied into the core's save RAM.
-    bool loadGame(const std::vector<uint8_t>& rom, const std::string& savePath);
+    // Memory-maps the ROM file (large DS ROMs never pass through the Java heap) and
+    // loads it; if savePath exists its contents are copied into the core's save RAM.
+    bool loadGame(const std::string& romPath, const std::string& savePath);
     void start();
     void pause();
     void resume();
@@ -27,6 +28,12 @@ public:
 
     void setWindow(ANativeWindow* window) { video_.setWindow(window); }
     void setButtons(uint32_t mask) { buttons_.store(mask); }
+    // Touchscreen: libretro pointer coordinates (-0x7FFF..0x7FFF over the whole frame).
+    void setPointer(int x, int y, bool pressed) {
+        pointerX_.store(x);
+        pointerY_.store(y);
+        pointerPressed_.store(pressed);
+    }
     void setSpeed(int multiplier) { speed_.store(multiplier < 1 ? 1 : multiplier); }
     void reset();
 
@@ -61,9 +68,13 @@ private:
     bool paused_ = false;
 
     std::atomic<uint32_t> buttons_{0};
+    std::atomic<int> pointerX_{0}, pointerY_{0};
+    std::atomic<bool> pointerPressed_{false};
     std::atomic<int> speed_{1};
     bool audioMuted_ = false;  // true while fast-forwarding
 
+    void* romMap_ = nullptr;  // mmap of the ROM file, kept until the core is closed
+    size_t romMapSize_ = 0;
     std::mutex saveMutex_;  // guards savePath_/lastSavedRam_ and the save file
     std::string savePath_;
     std::vector<uint8_t> lastSavedRam_;

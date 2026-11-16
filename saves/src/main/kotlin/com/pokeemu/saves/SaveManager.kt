@@ -79,8 +79,8 @@ class SaveManager(
 
     /** Replaces the save with imported bytes. Throws if they don't look like a GBA save. */
     fun import(bytes: ByteArray) {
-        require(bytes.size in VALID_SAVE_SIZES) {
-            "Not a GBA save file (${bytes.size} bytes; expected 512 B, 8, 32, 64 or 128 KB)"
+        require(isPlausibleSaveSize(bytes.size)) {
+            "Not a save file (${bytes.size} bytes; GBA/DS saves are a power of two from 512 B to 32 MB)"
         }
         replaceSave(bytes, REASON_BEFORE_IMPORT)
     }
@@ -196,7 +196,8 @@ class SaveManager(
         const val REASON_BEFORE_IMPORT = "before-import"
         const val REASON_BEFORE_SWITCH = "before-slot-switch"
 
-        val VALID_SAVE_SIZES = setOf(512, 8 * 1024, 32 * 1024, 64 * 1024, 128 * 1024)
+        /** GBA saves are 512 B..128 KB; DS saves 512 B..8 MB (some flash carts up to 32 MB). */
+        fun isPlausibleSaveSize(size: Int): Boolean = size in 512..(32 shl 20) && size and (size - 1) == 0
         private val BACKUP_NAME = Regex("""(\d+)-([a-z0-9-]+)""")
     }
 }

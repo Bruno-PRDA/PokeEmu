@@ -59,6 +59,41 @@ object PadLayouts {
         ),
     )
 
+    private fun dsControls(
+        a: Pair<Float, Float>, b: Pair<Float, Float>, x: Pair<Float, Float>, y: Pair<Float, Float>,
+        l: Pair<Float, Float>, r: Pair<Float, Float>,
+        select: Pair<Float, Float>, start: Pair<Float, Float>,
+    ) = listOf(
+        PadControl("A", Button.A.mask, a.first, a.second, 30.dp),
+        PadControl("B", Button.B.mask, b.first, b.second, 30.dp),
+        PadControl("X", Button.X.mask, x.first, x.second, 30.dp),
+        PadControl("Y", Button.Y.mask, y.first, y.second, 30.dp),
+        PadControl("L", Button.L.mask, l.first, l.second, 26.dp, pill = true),
+        PadControl("R", Button.R.mask, r.first, r.second, 26.dp, pill = true),
+        PadControl("SELECT", Button.SELECT.mask, select.first, select.second, 20.dp, pill = true),
+        PadControl("START", Button.START.mask, start.first, start.second, 20.dp, pill = true),
+    )
+
+    /** DS: A/B/X/Y diamond, below the (tall) screens. */
+    val dsPortrait = PadLayout(
+        dpadX = 0.22f, dpadY = 0.52f, dpadRadius = 64.dp,
+        controls = dsControls(
+            a = 0.90f to 0.52f, b = 0.76f to 0.74f, x = 0.76f to 0.30f, y = 0.62f to 0.52f,
+            l = 0.13f to 0.08f, r = 0.87f to 0.08f,
+            select = 0.40f to 0.93f, start = 0.60f to 0.93f,
+        ),
+    )
+
+    /** DS landscape: screens in the middle, controls on both sides. */
+    val dsLandscape = PadLayout(
+        dpadX = 0.11f, dpadY = 0.62f, dpadRadius = 64.dp,
+        controls = dsControls(
+            a = 0.95f to 0.58f, b = 0.88f to 0.74f, x = 0.88f to 0.42f, y = 0.81f to 0.58f,
+            l = 0.07f to 0.14f, r = 0.93f to 0.14f,
+            select = 0.08f to 0.92f, start = 0.92f to 0.92f,
+        ),
+    )
+
     /** Controls overlaid on the full screen, beside the game. */
     val landscape = PadLayout(
         dpadX = 0.11f, dpadY = 0.62f, dpadRadius = 68.dp,

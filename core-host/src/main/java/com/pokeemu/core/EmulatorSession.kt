@@ -6,7 +6,7 @@ import java.io.File
 
 /** libretro joypad button ids (bit positions in the button mask). */
 enum class Button(val id: Int) {
-    B(0), SELECT(2), START(3), UP(4), DOWN(5), LEFT(6), RIGHT(7), A(8), L(10), R(11);
+    B(0), Y(1), SELECT(2), START(3), UP(4), DOWN(5), LEFT(6), RIGHT(7), A(8), X(9), L(10), R(11);
 
     val mask: Int get() = 1 shl id
 }
@@ -30,6 +30,16 @@ class EmulatorSession private constructor() {
     fun setSurface(surface: Surface?) = NativeBridge.nativeSetSurface(surface)
     fun setButtons(mask: Int) = NativeBridge.nativeSetButtons(mask)
     fun setSpeed(multiplier: Int) = NativeBridge.nativeSetSpeed(multiplier)
+
+    /**
+     * Touchscreen input as a fraction of the whole video frame (0..1 on each
+     * axis; for DS, the frame is both screens stacked). The core maps it to the
+     * touch screen.
+     */
+    fun setTouch(fx: Float, fy: Float, pressed: Boolean) {
+        fun toRetro(f: Float) = (f.coerceIn(0f, 1f) * 0xFFFE - 0x7FFF).toInt()
+        NativeBridge.nativeSetPointer(toRetro(fx), toRetro(fy), pressed)
+    }
 
     fun saveState(): ByteArray? = NativeBridge.nativeSaveState()
     fun loadState(state: ByteArray): Boolean = NativeBridge.nativeLoadState(state)
@@ -63,6 +73,7 @@ class EmulatorSession private constructor() {
 
     companion object {
         const val GBA_CORE = "libmgba_libretro.so"
+        const val NDS_CORE = "libmelondsds_libretro.so"
         const val GBA_EWRAM = 0x02000000L
         const val GBA_EWRAM_SIZE = 0x40000
 
@@ -70,18 +81,19 @@ class EmulatorSession private constructor() {
             private set
 
         /**
-         * Opens [coreLibrary], loads [rom] and its battery save from [saveFile]
+         * Opens [coreLibrary], loads [romFile] (memory-mapped, so even 256 MB+ DS
+         * ROMs stay off the Java heap) and its battery save from [saveFile]
          * (created/updated as the game saves). Throws on failure.
          */
         @Synchronized
-        fun open(coreLibrary: String, systemDir: File, rom: ByteArray, saveFile: File): EmulatorSession {
+        fun open(coreLibrary: String, systemDir: File, romFile: File, saveFile: File): EmulatorSession {
             active?.close()
             systemDir.mkdirs()
             saveFile.parentFile?.mkdirs()
             check(NativeBridge.nativeCreate(coreLibrary, systemDir.absolutePath, saveFile.parentFile!!.absolutePath)) {
                 "Could not load emulator core $coreLibrary"
             }
-            if (!NativeBridge.nativeLoadGame(rom, saveFile.absolutePath)) {
+            if (!NativeBridge.nativeLoadGame(romFile.absolutePath, saveFile.absolutePath)) {
                 NativeBridge.nativeDestroy()
                 throw IllegalStateException("The core could not load this ROM")
             }

@@ -51,13 +51,29 @@ import java.io.File
 import java.text.DateFormat
 import java.util.Date
 
-/** Surface the native side draws into. */
+/**
+ * Surface the native side draws into. [onTouch] (DS touchscreen) receives
+ * touches as fractions of the surface, which matches the video frame.
+ */
+@android.annotation.SuppressLint("ClickableViewAccessibility")
 @Composable
-fun GameSurface(onSurface: (android.view.Surface?) -> Unit, modifier: Modifier = Modifier) {
+fun GameSurface(
+    onSurface: (android.view.Surface?) -> Unit,
+    aspect: Float,
+    modifier: Modifier = Modifier,
+    matchHeight: Boolean = false,
+    onTouch: ((Float, Float, Boolean) -> Unit)? = null,
+) {
     AndroidView(
-        modifier = modifier.aspectRatio(3f / 2f),
+        modifier = modifier.aspectRatio(aspect, matchHeightConstraintsFirst = matchHeight),
         factory = { ctx ->
             SurfaceView(ctx).apply {
+                if (onTouch != null) setOnTouchListener { v, e ->
+                    val pressed = e.actionMasked != android.view.MotionEvent.ACTION_UP &&
+                        e.actionMasked != android.view.MotionEvent.ACTION_CANCEL
+                    onTouch(e.x / v.width, e.y / v.height, pressed)
+                    true
+                }
                 holder.addCallback(object : SurfaceHolder.Callback {
                     override fun surfaceCreated(holder: SurfaceHolder) {}
                     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) =
@@ -78,15 +94,19 @@ fun PlayerScreen(
     onToggleFastForward: () -> Unit,
     onOpenMenu: () -> Unit,
     overlayOpen: Boolean,
-    onToggleOverlay: () -> Unit,
+    onToggleOverlay: (() -> Unit)?,
     overlay: @Composable (Modifier) -> Unit,
+    aspect: Float = 3f / 2f,
+    portraitPad: PadLayout = PadLayouts.portrait,
+    landscapePad: PadLayout = PadLayouts.landscape,
+    onTouch: ((Float, Float, Boolean) -> Unit)? = null,
 ) {
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val toolButtons = @Composable {
         IconButton(onClick = onToggleFastForward, colors = IconButtonDefaults.iconButtonColors(
             contentColor = if (fastForward) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.6f),
         )) { Icon(Icons.Default.FastForward, "Fast-forward") }
-        IconButton(onClick = onToggleOverlay, colors = IconButtonDefaults.iconButtonColors(
+        if (onToggleOverlay != null) IconButton(onClick = onToggleOverlay, colors = IconButtonDefaults.iconButtonColors(
             contentColor = if (overlayOpen) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.6f),
         )) { Icon(Icons.Default.QueryStats, "Battle info") }
         IconButton(onClick = onOpenMenu) { Icon(Icons.Default.Menu, "Menu", tint = Color.White.copy(alpha = 0.6f)) }
@@ -94,19 +114,33 @@ fun PlayerScreen(
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         if (landscape) {
-            GameSurface(onSurface, Modifier.align(Alignment.Center).fillMaxHeight())
-            Gamepad(PadLayouts.landscape, opacity = 0.8f, onButtons = onButtons)
+            val surface = @Composable {
+                GameSurface(onSurface, aspect, Modifier.align(Alignment.Center).fillMaxHeight(), matchHeight = true, onTouch = onTouch)
+            }
+            if (onTouch != null) {
+                // Touchscreen: the surface sits above the pad so it gets touches; buttons are beside it.
+                Gamepad(landscapePad, opacity = 0.8f, onButtons = onButtons)
+                surface()
+            } else {
+                surface()
+                Gamepad(landscapePad, opacity = 0.8f, onButtons = onButtons)
+            }
             Row(Modifier.align(Alignment.TopCenter)) { toolButtons() }
             if (overlayOpen) overlay(Modifier.align(Alignment.TopCenter).padding(top = 48.dp).width(360.dp).heightIn(max = 280.dp))
         } else {
             Column(Modifier.fillMaxSize()) {
-                Box(Modifier.fillMaxWidth()) {
-                    GameSurface(onSurface, Modifier.fillMaxWidth())
+                if (aspect >= 1f) {
+                    GameSurface(onSurface, aspect, Modifier.fillMaxWidth(), onTouch = onTouch)
+                } else {
+                    // Tall (DS) frame: limit its height so the controls still fit.
+                    Box(Modifier.fillMaxWidth().fillMaxHeight(0.62f), contentAlignment = Alignment.TopCenter) {
+                        GameSurface(onSurface, aspect, Modifier.fillMaxHeight(), matchHeight = true, onTouch = onTouch)
+                    }
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) { toolButtons() }
                 if (overlayOpen) overlay(Modifier.fillMaxWidth().padding(horizontal = 8.dp).heightIn(max = 260.dp))
                 Box(Modifier.fillMaxWidth().weight(1f)) {
-                    Gamepad(PadLayouts.portrait, opacity = 1f, onButtons = onButtons)
+                    Gamepad(portraitPad, opacity = 1f, onButtons = onButtons)
                 }
             }
         }

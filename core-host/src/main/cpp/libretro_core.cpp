@@ -80,12 +80,12 @@ bool LibretroCore::open(const std::string& libraryName, const std::string& syste
     return true;
 }
 
-bool LibretroCore::loadGame(const std::vector<uint8_t>& rom) {
+bool LibretroCore::loadGame(const void* data, size_t size, const std::string& path) {
     if (!initialized_ || gameLoaded_) return false;
     retro_game_info game{};
-    game.path = nullptr;
-    game.data = rom.data();
-    game.size = rom.size();
+    game.path = path.empty() ? nullptr : path.c_str();
+    game.data = data;
+    game.size = size;
     if (!retro_load_game_(&game)) {
         LOGE("retro_load_game failed");
         return false;
@@ -201,10 +201,15 @@ bool LibretroCore::environment(unsigned cmd, void* data) {
             }
             return true;
         }
+        case RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO:
+            self->avInfo_ = *static_cast<const retro_system_av_info*>(data);
+            return true;
+        case RETRO_ENVIRONMENT_SET_GEOMETRY:
+            self->avInfo_.geometry = *static_cast<const retro_game_geometry*>(data);
+            return true;
         case RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS:
         case RETRO_ENVIRONMENT_SET_CONTROLLER_INFO:
         case RETRO_ENVIRONMENT_SET_SUPPORT_ACHIEVEMENTS:
-        case RETRO_ENVIRONMENT_SET_GEOMETRY:
             return true;
         default:
             // Unknown/unsupported commands: core falls back to its defaults

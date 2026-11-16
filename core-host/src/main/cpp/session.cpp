@@ -1,6 +1,10 @@
 #include "session.h"
 
 #include <android/log.h>
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <chrono>
@@ -40,6 +44,7 @@ Session* Session::create(const std::string& coreLibrary, const std::string& syst
 Session::~Session() {
     stop();
     core_.close();
+    if (romMap_) munmap(romMap_, romMapSize_);
     if (current_ == this) current_ = nullptr;
 }
 
@@ -50,9 +55,28 @@ static bool readFile(const std::string& path, std::vector<uint8_t>& out) {
     return true;
 }
 
-bool Session::loadGame(const std::vector<uint8_t>& rom, const std::string& savePath) {
+bool Session::loadGame(const std::string& romPath, const std::string& savePath) {
     std::lock_guard<std::mutex> lock(coreMutex_);
-    if (!core_.loadGame(rom)) return false;
+    int fd = open(romPath.c_str(), O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        LOGE("cannot open ROM %s", romPath.c_str());
+        return false;
+    }
+    struct stat st {};
+    if (fstat(fd, &st) != 0 || st.st_size <= 0) {
+        close(fd);
+        return false;
+    }
+    // Private copy-on-write mapping: the core may patch its buffer without touching the file.
+    void* map = mmap(nullptr, static_cast<size_t>(st.st_size), PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
+    close(fd);
+    if (map == MAP_FAILED) {
+        LOGE("mmap of %zu bytes failed", static_cast<size_t>(st.st_size));
+        return false;
+    }
+    romMap_ = map;
+    romMapSize_ = static_cast<size_t>(st.st_size);
+    if (!core_.loadGame(romMap_, romMapSize_, romPath)) return false;
     savePath_ = savePath;
 
     std::vector<uint8_t> sav;
@@ -239,7 +263,17 @@ size_t Session::onAudio(const int16_t* data, size_t frames) {
 }
 
 int16_t Session::onInput(unsigned port, unsigned device, unsigned, unsigned id) {
-    if (!current_ || port != 0 || device != RETRO_DEVICE_JOYPAD) return 0;
+    if (!current_ || port != 0) return 0;
+    if (device == RETRO_DEVICE_POINTER) {
+        switch (id) {
+            case RETRO_DEVICE_ID_POINTER_X: return static_cast<int16_t>(current_->pointerX_.load());
+            case RETRO_DEVICE_ID_POINTER_Y: return static_cast<int16_t>(current_->pointerY_.load());
+            case RETRO_DEVICE_ID_POINTER_PRESSED: return current_->pointerPressed_.load() ? 1 : 0;
+            case RETRO_DEVICE_ID_POINTER_COUNT: return current_->pointerPressed_.load() ? 1 : 0;
+            default: return 0;
+        }
+    }
+    if (device != RETRO_DEVICE_JOYPAD) return 0;
     const uint32_t mask = current_->buttons_.load();
     if (id == RETRO_DEVICE_ID_JOYPAD_MASK) return static_cast<int16_t>(mask & 0xFFFF);
     return (mask >> id) & 1 ? 1 : 0;

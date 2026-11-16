@@ -33,6 +33,38 @@ class RomHeaderTest {
         assertNull(RomHeader.parse(ByteArray(16)))
     }
 
+    @Test fun parsesNdsHeaderAndChecksCrc() {
+        val rom = ByteArray(0x200)
+        "POKEMON PL".toByteArray().copyInto(rom, 0x00)
+        "CPUE".toByteArray().copyInto(rom, 0x0C)
+        "01".toByteArray().copyInto(rom, 0x10)
+        val crc = NdsHeader.crc16(rom, 0, 0x15E)
+        rom[0x15E] = crc.toByte(); rom[0x15F] = (crc shr 8).toByte()
+        val h = NdsHeader.parse(rom)!!
+        assertEquals("POKEMON PL", h.title)
+        assertEquals("CPUE", h.gameCode)
+        assertEquals(Platform.NDS, h.platform)
+        rom[0x20] = 1 // header changed, CRC no longer matches
+        assertNull(NdsHeader.parse(rom))
+    }
+
+    @Test fun crc16KnownValue() {
+        // CRC-16/MODBUS check value for "123456789".
+        assertEquals(0x4B37, NdsHeader.crc16("123456789".toByteArray(), 0, 9))
+    }
+
+    @Test fun platformFromFileName() {
+        assertEquals(Platform.NDS, Platform.forFileName("Pokemon Platinum.NDS"))
+        assertEquals(Platform.GBA, Platform.forFileName("x.gba"))
+        assertNull(Platform.forFileName("readme.txt"))
+    }
+
+    @Test fun streamingRomIdMatchesInMemoryId() {
+        val bytes = ByteArray(3 shl 20) { (it * 31).toByte() }
+        val f = java.io.File.createTempFile("rom", ".bin").apply { writeBytes(bytes); deleteOnExit() }
+        assertEquals(romId(bytes), romId(f))
+    }
+
     @Test fun romIdIsStableAndContentBased() {
         val a = fakeRom("A", "AAAA")
         assertEquals(romId(a), romId(a.copyOf()))

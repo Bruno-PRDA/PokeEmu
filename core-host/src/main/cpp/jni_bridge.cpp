@@ -41,9 +41,9 @@ JNI_FN(jboolean, nativeCreate)(JNIEnv* env, jobject, jstring coreLib, jstring sy
     return gSession ? JNI_TRUE : JNI_FALSE;
 }
 
-JNI_FN(jboolean, nativeLoadGame)(JNIEnv* env, jobject, jbyteArray rom, jstring savePath) {
+JNI_FN(jboolean, nativeLoadGame)(JNIEnv* env, jobject, jstring romPath, jstring savePath) {
     if (!gSession) return JNI_FALSE;
-    return gSession->loadGame(toBytes(env, rom), toString(env, savePath)) ? JNI_TRUE : JNI_FALSE;
+    return gSession->loadGame(toString(env, romPath), toString(env, savePath)) ? JNI_TRUE : JNI_FALSE;
 }
 
 JNI_FN(void, nativeStart)(JNIEnv*, jobject) {
@@ -70,6 +70,10 @@ JNI_FN(void, nativeSetSurface)(JNIEnv* env, jobject, jobject surface) {
 
 JNI_FN(void, nativeSetButtons)(JNIEnv*, jobject, jint mask) {
     if (gSession) gSession->setButtons(static_cast<uint32_t>(mask));
+}
+
+JNI_FN(void, nativeSetPointer)(JNIEnv*, jobject, jint x, jint y, jboolean pressed) {
+    if (gSession) gSession->setPointer(x, y, pressed == JNI_TRUE);
 }
 
 JNI_FN(void, nativeSetSpeed)(JNIEnv*, jobject, jint multiplier) {

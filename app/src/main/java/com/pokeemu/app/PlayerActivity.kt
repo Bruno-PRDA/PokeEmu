@@ -31,7 +31,9 @@ import com.pokeemu.core.EmulatorSession
 import com.pokeemu.saves.GameStorage
 import com.pokeemu.saves.SaveManager
 import com.pokeemu.saves.romId
+import com.pokeemu.saves.NdsHeader
 import com.pokeemu.saves.RomHeader
+import com.pokeemu.app.ui.PadLayouts
 import com.pokeemu.gen3.Gen3Game
 import com.pokeemu.gen3.Gen3Save
 import com.pokeemu.gen3.LiveReader
@@ -66,6 +68,7 @@ class PlayerActivity : ComponentActivity() {
     private var liveState by mutableStateOf<LiveState?>(null)
     private var romData by mutableStateOf<RomData?>(null)
     private var liveReader: LiveReader? = null
+    private var isDs by mutableStateOf(false)
     private var overlayJob: Job? = null
 
     private var touchButtons = 0
@@ -98,8 +101,13 @@ class PlayerActivity : ComponentActivity() {
                     onToggleFastForward = ::toggleFastForward,
                     onOpenMenu = { showDialog(Dialog.MENU) },
                     overlayOpen = overlayOpen,
-                    onToggleOverlay = ::toggleOverlay,
+                    // The battle overlay reads Gen 3 memory, so it is GBA-only for now.
+                    onToggleOverlay = if (isDs) null else ::toggleOverlay,
                     overlay = { mod -> OverlayPanel(liveState, romData, mod) },
+                    aspect = if (isDs) 256f / 384f else 3f / 2f,
+                    portraitPad = if (isDs) PadLayouts.dsPortrait else PadLayouts.portrait,
+                    landscapePad = if (isDs) PadLayouts.dsLandscape else PadLayouts.landscape,
+                    onTouch = if (isDs) { x, y, down -> session?.setTouch(x, y, down) } else null,
                 )
                 when (dialog) {
                     Dialog.MENU -> PauseMenu(
@@ -132,23 +140,27 @@ class PlayerActivity : ComponentActivity() {
 
     private suspend fun boot(uri: Uri) {
         try {
-            val rom = withContext(Dispatchers.IO) { RomLibrary(this@PlayerActivity).readRom(uri) }
-            val id = romId(rom)
+            val local = withContext(Dispatchers.IO) { RomLibrary(this@PlayerActivity).localCopy(uri) }
+            val id = local.id
             gameId = id
+            val header = withContext(Dispatchers.IO) {
+                local.file.inputStream().use { input -> ByteArray(NdsHeader.HEADER_SIZE).also { input.read(it) } }
+            }
+            isDs = NdsHeader.parse(header) != null
             // Daily safety net before the game can touch the save.
             withContext(Dispatchers.IO) { runCatching { SaveManager(storage, id).dailyBackupIfDue() } }
             session = withContext(Dispatchers.IO) {
                 EmulatorSession.open(
-                    coreLibrary = EmulatorSession.GBA_CORE,
+                    coreLibrary = if (isDs) EmulatorSession.NDS_CORE else EmulatorSession.GBA_CORE,
                     systemDir = File(filesDir, "system"),
-                    rom = rom,
+                    romFile = local.file,
                     saveFile = storage.saveFile(id),
                 )
             }
             session!!.start()
             ready = true
             if (storage.readState(id, GameStorage.AUTO_SLOT) != null) showDialog(Dialog.RESUME_PROMPT)
-            prepareOverlay(id, rom)
+            if (!isDs) prepareOverlay(id, withContext(Dispatchers.IO) { local.file.readBytes() }) // GBA: <= 32 MB
         } catch (e: Exception) {
             error = "Could not start the game:\n${e.message}"
         }
@@ -272,6 +284,8 @@ class PlayerActivity : ComponentActivity() {
     private fun keyToButton(keyCode: Int): Int = when (keyCode) {
         KeyEvent.KEYCODE_BUTTON_A, KeyEvent.KEYCODE_X -> Button.A.mask
         KeyEvent.KEYCODE_BUTTON_B, KeyEvent.KEYCODE_Z -> Button.B.mask
+        KeyEvent.KEYCODE_BUTTON_X -> Button.X.mask
+        KeyEvent.KEYCODE_BUTTON_Y -> Button.Y.mask
         KeyEvent.KEYCODE_BUTTON_L1, KeyEvent.KEYCODE_A -> Button.L.mask
         KeyEvent.KEYCODE_BUTTON_R1, KeyEvent.KEYCODE_S -> Button.R.mask
         KeyEvent.KEYCODE_BUTTON_START, KeyEvent.KEYCODE_ENTER -> Button.START.mask

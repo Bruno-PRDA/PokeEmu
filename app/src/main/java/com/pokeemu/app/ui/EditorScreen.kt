@@ -93,8 +93,9 @@ fun EditorScreen(rom: RomEntry, onBack: () -> Unit) {
 
     suspend fun load() {
         val (e, m) = withContext(Dispatchers.IO) {
-            val bytes = RomLibrary(context).readRom(rom.uri)
-            val id = romId(bytes)
+            val local = RomLibrary(context).localCopy(rom.uri)
+            val bytes = local.file.readBytes() // GBA ROMs are at most 32 MB
+            val id = local.id
             val storage = GameStorage(context.filesDir)
             val store = RomDataStore(storage)
             val data = store.cached(id) ?: run {

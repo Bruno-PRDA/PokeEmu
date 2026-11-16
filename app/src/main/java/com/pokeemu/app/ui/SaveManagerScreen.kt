@@ -54,6 +54,7 @@ import com.pokeemu.app.RomLibrary
 import com.pokeemu.gen3.Gen3Save
 import com.pokeemu.gen3.Gen3SaveException
 import com.pokeemu.saves.GameStorage
+import com.pokeemu.saves.Platform
 import com.pokeemu.saves.SaveManager
 import com.pokeemu.saves.romId
 import kotlinx.coroutines.Dispatchers
@@ -69,6 +70,8 @@ private data class SaveState(
     val backups: List<SaveManager.Backup>,
     val hasSave: Boolean,
     val summary: Result<Gen3Save>?,
+    /** DS saves aren't decoded yet (Gen 4/5 tools come later); size in bytes for the card. */
+    val dsSaveSize: Long? = null,
 )
 
 /** A confirmation the user must accept before something replaces their save. */
@@ -77,6 +80,7 @@ private data class Confirm(val title: String, val text: String, val action: susp
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SaveManagerScreen(rom: RomEntry, onBack: () -> Unit, onEditPokemon: () -> Unit) {
+    val isDs = rom.header.platform == Platform.NDS
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var manager by remember { mutableStateOf<SaveManager?>(null) }
@@ -95,7 +99,8 @@ fun SaveManagerScreen(rom: RomEntry, onBack: () -> Unit, onEditPokemon: () -> Un
                 activeSlot = m.activeSlot,
                 backups = m.backups(),
                 hasSave = m.hasSave,
-                summary = if (m.hasSave) runCatching { Gen3Save.parse(m.saveFile.readBytes()) } else null,
+                summary = if (m.hasSave && !isDs) runCatching { Gen3Save.parse(m.saveFile.readBytes()) } else null,
+                dsSaveSize = if (m.hasSave && isDs) m.saveFile.length() else null,
             )
         }
     }
@@ -115,7 +120,7 @@ fun SaveManagerScreen(rom: RomEntry, onBack: () -> Unit, onEditPokemon: () -> Un
     }
 
     LaunchedEffect(rom.uri) {
-        val id = withContext(Dispatchers.IO) { romId(RomLibrary(context).readRom(rom.uri)) }
+        val id = withContext(Dispatchers.IO) { RomLibrary(context).localCopy(rom.uri).id }
         manager = SaveManager(GameStorage(context.filesDir), id)
         refresh()
     }
@@ -247,6 +252,10 @@ private fun SummaryCard(s: SaveState, onEditPokemon: () -> Unit) {
             val summary = s.summary
             when {
                 !s.hasSave -> Text("No save yet — play the game and save in-game.")
+                s.dsSaveSize != null -> {
+                    Text("Nintendo DS save", style = MaterialTheme.typography.titleMedium)
+                    Text("%,d KB · backups, slots and import/export work; Gen 4/5 editing comes later".format(s.dsSaveSize / 1024))
+                }
                 summary == null -> Unit
                 summary.isFailure -> {
                     Text("Not a readable Gen 3 save", style = MaterialTheme.typography.titleMedium)
