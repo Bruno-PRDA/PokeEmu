@@ -216,13 +216,10 @@ int16_t LibretroCore::inputState(unsigned port, unsigned device, unsigned index,
 }
 
 void LibretroCore::log(retro_log_level level, const char* fmt, ...) {
-    int prio = ANDROID_LOG_DEBUG;
-    switch (level) {
-        case RETRO_LOG_INFO: prio = ANDROID_LOG_INFO; break;
-        case RETRO_LOG_WARN: prio = ANDROID_LOG_WARN; break;
-        case RETRO_LOG_ERROR: prio = ANDROID_LOG_ERROR; break;
-        default: break;
-    }
+    // Cores log a lot at info/debug level (mGBA logs every DMA transfer), and
+    // writing that to logcat costs real emulation speed. Keep warnings/errors only.
+    if (level < RETRO_LOG_WARN) return;
+    const int prio = level == RETRO_LOG_ERROR ? ANDROID_LOG_ERROR : ANDROID_LOG_WARN;
     va_list args;
     va_start(args, fmt);
     __android_log_vprint(prio, "core", fmt, args);

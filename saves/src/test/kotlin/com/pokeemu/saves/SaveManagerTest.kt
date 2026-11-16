@@ -112,6 +112,17 @@ class SaveManagerTest {
         assertTrue(mgr.backups().any { it.reason.startsWith("deleted-slot") })
     }
 
+    @Test fun applyEditBacksUpVerifiesAndAbortsOnFailure() {
+        writeSave(1)
+        storage.writeState("rom1", GameStorage.AUTO_SLOT, byteArrayOf(9))
+        assertFailsWith<IllegalStateException> { mgr.applyEdit(sav(2)) { error("verification failed") } }
+        assertEquals(1, currentFill(), "failed verification leaves the save untouched")
+        mgr.applyEdit(sav(3)) { check(it[0].toInt() == 3) }
+        assertEquals(3, currentFill())
+        assertTrue(mgr.backups().any { it.reason == SaveManager.REASON_BEFORE_EDIT && it.file.readBytes()[0].toInt() == 1 })
+        assertNull(storage.readState("rom1", GameStorage.AUTO_SLOT))
+    }
+
     @Test fun rejectsBadSlotNames() {
         assertFailsWith<IllegalArgumentException> { mgr.createSlot("a/b", false) }
         assertFailsWith<IllegalArgumentException> { mgr.createSlot("  ", false) }

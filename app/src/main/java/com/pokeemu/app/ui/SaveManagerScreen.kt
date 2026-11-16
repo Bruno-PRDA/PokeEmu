@@ -76,7 +76,7 @@ private data class Confirm(val title: String, val text: String, val action: susp
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SaveManagerScreen(rom: RomEntry, onBack: () -> Unit) {
+fun SaveManagerScreen(rom: RomEntry, onBack: () -> Unit, onEditPokemon: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var manager by remember { mutableStateOf<SaveManager?>(null) }
@@ -155,7 +155,7 @@ fun SaveManagerScreen(rom: RomEntry, onBack: () -> Unit) {
             contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            item { SummaryCard(s) }
+            item { SummaryCard(s, onEditPokemon) }
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilledTonalButton(onClick = { importLauncher.launch(arrayOf("*/*")) }) { Text("Import .sav") }
@@ -241,7 +241,7 @@ private fun SectionTitle(text: String, modifier: Modifier = Modifier) =
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun SummaryCard(s: SaveState) {
+private fun SummaryCard(s: SaveState, onEditPokemon: () -> Unit) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             val summary = s.summary
@@ -276,6 +276,7 @@ private fun SummaryCard(s: SaveState) {
                             }
                         }
                     }
+                    FilledTonalButton(onClick = onEditPokemon, modifier = Modifier.padding(top = 8.dp)) { Text("Edit Pokémon") }
                 }
             }
         }

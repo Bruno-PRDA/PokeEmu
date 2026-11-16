@@ -16,7 +16,13 @@ object Gen3Text {
             this[0xD5 + i] = 'a' + i
         }
         this[0xF0] = ':'
+        this[0x2D] = '&'; this[0x2E] = '+'; this[0x35] = '='; this[0x36] = ';'
+        this[0x5B] = '%'; this[0x5C] = '('; this[0x5D] = ')'; this[0x85] = '<'; this[0x86] = '>'
+        this[0xB7] = '$'; this[0xB9] = '×'
     }
+
+    /** True if [b] decodes to a known character (terminator excluded). */
+    fun isChar(b: Int): Boolean = decodeTable[b and 0xFF] != null
 
     private val encodeTable: Map<Char, Int> = buildMap {
         decodeTable.forEachIndexed { code, ch -> if (ch != null && ch !in this) put(ch, code) }

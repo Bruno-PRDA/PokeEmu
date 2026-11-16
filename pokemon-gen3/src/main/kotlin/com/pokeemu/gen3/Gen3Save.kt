@@ -30,6 +30,13 @@ class Gen3Save private constructor(
     /** Full 4 KiB sections of the active block, indexed by section id. */
     private val sections: Array<ByteArray>,
     val layout: SaveLayout,
+    /**
+     * True for saves from engines (CFRU and similar) that checksum every
+     * section over 0xFF0 bytes and store extra data past the vanilla sizes.
+     */
+    val extendedChecksums: Boolean,
+    /** How Pokémon records are stored in this save (detected from the party). */
+    val pkEncoding: Pk3Encoding,
 ) {
     val game: Gen3Game get() = layout.game
 
@@ -65,14 +72,26 @@ class Gen3Save private constructor(
 
     val party: List<Pk3>
         get() = (0 until partySize).map { i ->
-            Pk3(sections[1].copyOfRange(layout.team + i * Pk3.PARTY_SIZE, layout.team + (i + 1) * Pk3.PARTY_SIZE))
+            Pk3(sections[1].copyOfRange(layout.team + i * Pk3.PARTY_SIZE, layout.team + (i + 1) * Pk3.PARTY_SIZE), pkEncoding)
         }
 
     /** Replaces party slot [index] (0..partySize-1). */
     fun setPartyMember(index: Int, pk: Pk3) {
         require(index in 0 until partySize) { "party slot $index is empty" }
         require(pk.isParty) { "party members need the 100-byte format" }
-        pk.toBytes().copyInto(sections[1], layout.team + index * Pk3.PARTY_SIZE)
+        pk.withEncoding(pkEncoding).toBytes().copyInto(sections[1], layout.team + index * Pk3.PARTY_SIZE)
+    }
+
+    /** Replaces the whole party (1..6 Pokémon, 100-byte form); unused slots are zeroed. */
+    fun setParty(members: List<Pk3>) {
+        require(members.size in 1..6) { "party must have 1..6 Pokémon" }
+        require(members.all { it.isParty }) { "party members need the 100-byte format" }
+        val s = sections[1]
+        s.put32(layout.teamSize, members.size.toLong())
+        for (i in 0 until 6) {
+            val bytes = members.getOrNull(i)?.withEncoding(pkEncoding)?.toBytes() ?: ByteArray(Pk3.PARTY_SIZE)
+            bytes.copyInto(s, layout.team + i * Pk3.PARTY_SIZE)
+        }
     }
 
     // ---- PC boxes ---------------------------------------------------------------------
@@ -111,7 +130,7 @@ class Gen3Save private constructor(
         val pc = pcBuffer()
         return (0 until BOX_SLOTS).map { slot ->
             val at = 4 + (box * BOX_SLOTS + slot) * Pk3.BOX_SIZE
-            Pk3(pc.copyOfRange(at, at + Pk3.BOX_SIZE)).takeUnless { it.isEmpty }
+            Pk3(pc.copyOfRange(at, at + Pk3.BOX_SIZE), pkEncoding).takeUnless { it.isEmpty }
         }
     }
 
@@ -119,7 +138,7 @@ class Gen3Save private constructor(
     fun setBoxSlot(box: Int, slot: Int, pk: Pk3?) {
         require(box in 0 until BOX_COUNT && slot in 0 until BOX_SLOTS)
         val pc = pcBuffer()
-        val bytes = pk?.toBytes()?.copyOf(Pk3.BOX_SIZE) ?: ByteArray(Pk3.BOX_SIZE)
+        val bytes = pk?.withEncoding(pkEncoding)?.toBoxBytes() ?: ByteArray(Pk3.BOX_SIZE)
         bytes.copyInto(pc, 4 + (box * BOX_SLOTS + slot) * Pk3.BOX_SIZE)
         writePcBuffer(pc)
     }
@@ -137,7 +156,7 @@ class Gen3Save private constructor(
             val section = ByteArray(SECTION_SIZE)
             sections[id].copyInto(section, 0, 0, OFF_ID)  // keep any padding bytes as the game wrote them
             section.put16(OFF_ID, id)
-            section.put16(OFF_CHECKSUM, checksum(section, dataSize(id)))
+            section.put16(OFF_CHECKSUM, checksum(section, checksumSize(id, extendedChecksums)))
             section.put32(OFF_SIGNATURE, SIGNATURE)
             section.put32(OFF_INDEX, newIndex)
             section.copyInto(out, base)
@@ -163,7 +182,12 @@ class Gen3Save private constructor(
         private const val PC_BUFFER_SIZE = 8 * 0xF80 + 0x7D0
         private const val BOX_NAMES = 4 + BOX_COUNT * BOX_SLOTS * Pk3.BOX_SIZE
 
-        /** Bytes covered by each section's checksum. */
+        /** Bytes covered by a section's checksum: vanilla sizes, or 0xFF0 for extended (CFRU-style) saves. */
+        fun checksumSize(id: Int, extended: Boolean): Int = if (extended) EXTENDED_SIZE else dataSize(id)
+
+        private const val EXTENDED_SIZE = 0xFF0
+
+        /** Vanilla data size of each section (also what its checksum covers in vanilla games). */
         fun dataSize(id: Int): Int = when (id) {
             0 -> 0xF2C
             4 -> 0xF08
@@ -193,16 +217,19 @@ class Gen3Save private constructor(
             newest.badChecksum?.let { throw Gen3SaveException("Section $it of the newest save has a bad checksum") }
 
             val layout = SaveLayout.of(forcedGame ?: detectGame(newest.sections))
-            return Gen3Save(bytes.copyOf(), newest.block, newest.order, newest.index, newest.sections, layout)
+            val encoding = detectEncoding(newest.sections, layout)
+            return Gen3Save(bytes.copyOf(), newest.block, newest.order, newest.index, newest.sections, layout, newest.extended, encoding)
         }
 
-        private class Block(val block: Int, val index: Long, val order: IntArray, val sections: Array<ByteArray>, val badChecksum: Int?)
+        private class Block(
+            val block: Int, val index: Long, val order: IntArray, val sections: Array<ByteArray>,
+            val badChecksum: Int?, val extended: Boolean,
+        )
 
         private fun readBlock(bytes: ByteArray, block: Int): Block? {
             val order = IntArray(SECTION_COUNT)
             val sections = arrayOfNulls<ByteArray>(SECTION_COUNT)
             var index = -1L
-            var bad: Int? = null
             for (p in 0 until SECTION_COUNT) {
                 val base = block * BLOCK_SIZE + p * SECTION_SIZE
                 val sec = bytes.copyOfRange(base, base + SECTION_SIZE)
@@ -211,12 +238,32 @@ class Gen3Save private constructor(
                 if (id >= SECTION_COUNT || sections[id] != null) return null
                 val idx = sec.u32(OFF_INDEX)
                 if (index == -1L) index = idx else if (idx != index) return null
-                if (checksum(sec, dataSize(id)) != sec.u16(OFF_CHECKSUM) && bad == null) bad = id
                 order[p] = id
                 sections[id] = sec
             }
             @Suppress("UNCHECKED_CAST")
-            return Block(block, index, order, sections as Array<ByteArray>, bad)
+            val secs = sections as Array<ByteArray>
+            // Every section must verify under one scheme: vanilla sizes, or 0xFF0 everywhere.
+            fun firstBad(extended: Boolean) =
+                (0 until SECTION_COUNT).firstOrNull { checksum(secs[it], checksumSize(it, extended)) != secs[it].u16(OFF_CHECKSUM) }
+            val badVanilla = firstBad(extended = false)
+            val extended = badVanilla != null && firstBad(extended = true) == null
+            return Block(block, index, order, secs, if (extended) null else badVanilla, extended)
+        }
+
+        /**
+         * Standard unless the party's checksums all fail while the records read
+         * sensibly as plain data with a zero checksum (unencrypted hack engines).
+         */
+        private fun detectEncoding(sections: Array<ByteArray>, layout: SaveLayout): Pk3Encoding {
+            val size = sections[1].u32(layout.teamSize).toInt().coerceIn(0, 6)
+            val raws = (0 until size).map { i -> sections[1].copyOfRange(layout.team + i * Pk3.PARTY_SIZE, layout.team + (i + 1) * Pk3.PARTY_SIZE) }
+            if (raws.isEmpty() || raws.all { Pk3(it).checksumValid }) return Pk3Encoding.STANDARD
+            val plainOk = raws.all { r ->
+                val pk = Pk3(r, Pk3Encoding.PLAIN)
+                r.u16(0x1C) == 0 && pk.species in 1..2047 && pk.experience <= 2_000_000 && pk.moves.any { it != 0 }
+            }
+            return if (plainOk) Pk3Encoding.PLAIN else Pk3Encoding.STANDARD
         }
 
         /** Section 0 offset 0xAC: 0 = Ruby/Sapphire, 1 = FireRed/LeafGreen, anything else = Emerald's security key. */

@@ -1,16 +1,24 @@
 package com.pokeemu.gen3
 
+/** How the 48 data bytes of a Pokémon record are stored. */
+enum class Pk3Encoding {
+    /** Vanilla: shuffled by personality, XOR-encrypted, with a checksum. */
+    STANDARD,
+    /** Some hack engines (e.g. CFRU builds like Pokémon Odyssey): plain G-A-E-M order, checksum left at 0. */
+    PLAIN,
+}
+
 /**
  * One Gen 3 Pokémon: 80 bytes in the PC, 100 bytes in the party (adds level,
  * HP and calculated stats).
  *
  * Bytes 0x20..0x4F hold four 12-byte substructures — Growth, Attacks,
- * EVs/Condition, Misc — shuffled into one of 24 orders (personality % 24)
- * and XOR-encrypted with (personality xor original-trainer id). This class
- * decrypts on construction and re-encrypts in [toBytes]; unknown bytes are
- * preserved, so decode → encode is byte-identical.
+ * EVs/Condition, Misc. With [Pk3Encoding.STANDARD] they're shuffled into one
+ * of 24 orders (personality % 24) and XOR-encrypted with (personality xor
+ * original-trainer id). This class decodes on construction and re-encodes in
+ * [toBytes]; unknown bytes are preserved, so decode → encode is byte-identical.
  */
-class Pk3(raw: ByteArray) {
+class Pk3(raw: ByteArray, val encoding: Pk3Encoding = Pk3Encoding.STANDARD) {
     init {
         require(raw.size == BOX_SIZE || raw.size == PARTY_SIZE) { "Pk3 must be 80 or 100 bytes, got ${raw.size}" }
     }
@@ -25,21 +33,44 @@ class Pk3(raw: ByteArray) {
     val checksumValid: Boolean
 
     init {
-        val key = key()
-        val order = ORDERS[(personality % 24).toInt()]
-        for (pos in 0 until 4) {
-            val sub = order[pos]
-            for (w in 0 until 3) {
-                val src = 0x20 + pos * 12 + w * 4
-                data.put32(sub * 12 + w * 4, bytes.u32(src) xor key)
+        if (encoding == Pk3Encoding.PLAIN) {
+            bytes.copyInto(data, 0, 0x20, 0x50)
+            checksumValid = true // this format has no checksum
+        } else {
+            val key = key()
+            val order = ORDERS[(personality % 24).toInt()]
+            for (pos in 0 until 4) {
+                val sub = order[pos]
+                for (w in 0 until 3) {
+                    val src = 0x20 + pos * 12 + w * 4
+                    data.put32(sub * 12 + w * 4, bytes.u32(src) xor key)
+                }
             }
+            checksumValid = computeChecksum() == bytes.u16(0x1C)
         }
-        checksumValid = computeChecksum() == bytes.u16(0x1C)
+    }
+
+    /** Independent copy (same format and encoding). */
+    fun copy(): Pk3 = Pk3(toBytes(), encoding)
+
+    /** Same Pokémon stored with another encoding (e.g. standard for .pk3 export). */
+    fun withEncoding(target: Pk3Encoding): Pk3 {
+        if (target == encoding) return copy()
+        val out = Pk3(ByteArray(bytes.size), target)
+        bytes.copyInto(out.bytes)
+        data.copyInto(out.data)
+        return Pk3(out.toBytes(), target)
     }
 
     // ---- unencrypted header -------------------------------------------------------
 
-    val personality: Long get() = bytes.u32(0x00)
+    /**
+     * Changing this changes the encryption key and substructure order; that is
+     * handled in [toBytes] because the decrypted data is kept separately.
+     */
+    var personality: Long
+        get() = bytes.u32(0x00)
+        set(v) = bytes.put32(0x00, v and 0xFFFFFFFFL)
     val otId: Long get() = bytes.u32(0x04)
     val trainerId: Int get() = (otId and 0xFFFF).toInt()
     val secretId: Int get() = (otId shr 16).toInt()
@@ -127,6 +158,33 @@ class Pk3(raw: ByteArray) {
     val level: Int? get() = if (isParty) bytes.u8(0x54) else null
     val currentHp: Int? get() = if (isParty) bytes.u16(0x56) else null
     val maxHp: Int? get() = if (isParty) bytes.u16(0x58) else null
+    /** Party stats in HP, Atk, Def, Spe, SpA, SpD order. */
+    val partyStats: List<Int>? get() = if (isParty) List(6) { bytes.u16(0x58 + it * 2) } else null
+
+    /**
+     * Updates the party-only fields after an edit. Current HP keeps the same
+     * damage taken (never below 1 unless already fainted, never above max).
+     */
+    fun setPartyStats(level: Int, stats: List<Int>) {
+        check(isParty) { "box Pokémon have no stored stats" }
+        val oldMax = bytes.u16(0x58)
+        val oldHp = bytes.u16(0x56)
+        val newMax = stats[0]
+        val hp = when {
+            oldMax == 0 -> newMax // freshly created / withdrawn: full health
+            oldHp == 0 -> 0 // stays fainted
+            else -> (newMax - (oldMax - oldHp)).coerceIn(1, newMax)
+        }
+        bytes.put8(0x54, level)
+        bytes.put16(0x56, hp)
+        stats.forEachIndexed { i, v -> bytes.put16(0x58 + i * 2, v) }
+    }
+
+    /** 100-byte copy with empty party fields (call [setPartyStats] afterwards). */
+    fun toPartyForm(): Pk3 = if (isParty) copy() else Pk3(toBytes().copyOf(PARTY_SIZE), encoding)
+
+    /** 80-byte PC form. */
+    fun toBoxForm(): Pk3 = Pk3(toBoxBytes(), encoding)
 
     // ---- encoding ------------------------------------------------------------------------
 
@@ -141,6 +199,11 @@ class Pk3(raw: ByteArray) {
     /** Re-shuffles, re-encrypts and re-checksums. Same length as the input. */
     fun toBytes(): ByteArray {
         val out = bytes.copyOf()
+        if (encoding == Pk3Encoding.PLAIN) {
+            out.put16(0x1C, 0) // mirror the game: no checksum in this format
+            data.copyInto(out, 0x20)
+            return out
+        }
         out.put16(0x1C, computeChecksum())
         val key = key()
         val order = ORDERS[(personality % 24).toInt()]

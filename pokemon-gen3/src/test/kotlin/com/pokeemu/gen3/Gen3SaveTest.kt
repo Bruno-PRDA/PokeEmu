@@ -124,6 +124,54 @@ class Gen3SaveTest {
         assertNull(Gen3Save.parse(reread.toBytes()).box(3)[13])
     }
 
+    /** Like Pokémon Odyssey (CFRU): all sections checksummed over 0xFF0, extra data past 0xF80. */
+    @Test fun extendedChecksumSavesReadAndWriteBack() {
+        val b = SaveBuilder(SaveLayout.FIRERED_LEAFGREEN).trainer("NYX", 1, 2).party(mon(25, 5))
+        b.sections[1][0xFE1] = 0x42 // hack-specific data past the vanilla size
+        val file = ByteArray(Gen3Save.FILE_SIZE) { 0xFF.toByte() }
+        for (p in 0 until 14) {
+            val sec = b.sections[p].copyOf()
+            sec.put16(0xFF4, p)
+            sec.put16(0xFF6, Gen3Save.checksum(sec, 0xFF0))
+            sec.put32(0xFF8, 0x08012025L)
+            sec.put32(0xFFC, 1)
+            sec.copyInto(file, 0xE000 + p * 0x1000)
+        }
+        val save = Gen3Save.parse(file)
+        assertTrue(save.extendedChecksums)
+        assertEquals("NYX", save.trainer.name)
+        save.money = 777
+        val written = save.toBytes()
+        val reread = Gen3Save.parse(written)
+        assertTrue(reread.extendedChecksums, "written back in the same scheme")
+        assertEquals(777, reread.money)
+        assertEquals(0x42, written[1 * 0x1000 + 0xFE1].toInt() and 0xFF, "extra data preserved (section 1 now at physical slot 1 of block 0)")
+    }
+
+    /** Pokémon Odyssey stores records unencrypted in G-A-E-M order with checksum 0. */
+    @Test fun plainEncodedPokemonAreDetectedAndKept() {
+        fun plain(species: Int, pid: Long): Pk3 = Pk3.create(pid, 0x0001_0002L).apply {
+            this.species = species; experience = 125; setMove(0, 84)
+        }.withEncoding(Pk3Encoding.PLAIN)
+        val bytes = SaveBuilder(SaveLayout.FIRERED_LEAFGREEN).trainer("NYX", 1, 2).party(plain(353, 0xC7D85B5BL), plain(354, 0x7FBFF629L)).build()
+        // Raw check: species readable without decryption, checksum 0.
+        val save = Gen3Save.parse(bytes)
+        assertEquals(Pk3Encoding.PLAIN, save.pkEncoding)
+        assertEquals(listOf(353, 354), save.party.map { it.species })
+        assertEquals(84, save.party[0].move(0))
+
+        // A standard-encoded Pokémon written into this save is converted to plain.
+        save.setBoxSlot(0, 0, mon(25, 0x1234L))
+        val reread = Gen3Save.parse(save.toBytes())
+        assertEquals(Pk3Encoding.PLAIN, reread.pkEncoding)
+        assertEquals(25, reread.box(0)[0]?.species)
+        assertEquals(0, reread.box(0)[0]!!.toBytes().u16(0x1C), "checksum stays 0 like the game writes it")
+        // And back to standard for .pk3 export.
+        val exported = Pk3(reread.party[0].withEncoding(Pk3Encoding.STANDARD).toBytes())
+        assertTrue(exported.checksumValid)
+        assertEquals(353, exported.species)
+    }
+
     @Test fun rejectsBadInput() {
         assertFailsWith<Gen3SaveException> { Gen3Save.parse(ByteArray(0x8000)) }
         assertFailsWith<Gen3SaveException> { Gen3Save.parse(ByteArray(Gen3Save.FILE_SIZE) { 0xFF.toByte() }) }
@@ -151,10 +199,10 @@ class Gen3SaveTest {
             println("${f.name}: ${save.game.label}, ${save.trainer}, party ${save.party.map { it.species }}")
             for (pk in save.party) {
                 assertTrue(pk.checksumValid, "${f.name}: party checksum")
-                assertContentEquals(pk.toBytes(), Pk3(pk.toBytes()).toBytes())
+                assertContentEquals(pk.toBytes(), Pk3(pk.toBytes(), pk.encoding).toBytes())
             }
             for (b in 0 until Gen3Save.BOX_COUNT) for (pk in save.box(b).filterNotNull()) {
-                assertContentEquals(pk.toBytes(), Pk3(pk.toBytes()).toBytes(), "${f.name}: box $b")
+                assertContentEquals(pk.toBytes(), Pk3(pk.toBytes(), pk.encoding).toBytes(), "${f.name}: box $b")
             }
             val reread = Gen3Save.parse(save.toBytes())
             assertEquals(save.trainer, reread.trainer)

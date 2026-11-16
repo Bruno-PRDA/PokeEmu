@@ -8,10 +8,12 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.key
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.lifecycleScope
+import com.pokeemu.app.ui.EditorScreen
 import com.pokeemu.app.ui.LibraryScreen
 import com.pokeemu.app.ui.PokeEmuTheme
 import com.pokeemu.app.ui.SaveManagerScreen
@@ -24,6 +26,7 @@ class MainActivity : ComponentActivity() {
     private var loading by mutableStateOf(false)
     private var hasFolder by mutableStateOf(false)
     private var managingSaves by mutableStateOf<RomEntry?>(null)
+    private var editing by mutableStateOf<RomEntry?>(null)
 
     private val pickFolder = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
         if (uri != null) {
@@ -41,9 +44,16 @@ class MainActivity : ComponentActivity() {
         setContent {
             PokeEmuTheme {
                 LaunchedEffect(Unit) { if (hasFolder) rescan() }
+                editing?.let { rom ->
+                    EditorScreen(rom, onBack = { editing = null })
+                    return@PokeEmuTheme
+                }
                 managingSaves?.let { rom ->
                     BackHandler { managingSaves = null }
-                    SaveManagerScreen(rom, onBack = { managingSaves = null })
+                    // key: re-read the save summary when coming back from the editor
+                    key(rom, editing) {
+                        SaveManagerScreen(rom, onBack = { managingSaves = null }, onEditPokemon = { editing = rom })
+                    }
                     return@PokeEmuTheme
                 }
                 LibraryScreen(

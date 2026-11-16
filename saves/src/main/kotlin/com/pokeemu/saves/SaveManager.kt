@@ -85,6 +85,23 @@ class SaveManager(
         replaceSave(bytes, REASON_BEFORE_IMPORT)
     }
 
+    /**
+     * Writes an edited save: backup → temp file → [verify] the temp file's
+     * bytes (throw to abort) → replace. The original is untouched on failure.
+     */
+    fun applyEdit(bytes: ByteArray, verify: (ByteArray) -> Unit) {
+        backup(REASON_BEFORE_EDIT)
+        val tmp = File(saveFile.parentFile, saveFile.name + ".edit")
+        try {
+            tmp.writeBytes(bytes)
+            verify(tmp.readBytes())
+            GameStorage.writeAtomically(saveFile, tmp.readBytes())
+        } finally {
+            tmp.delete()
+        }
+        storage.invalidateAutoState(romId)
+    }
+
     private fun replaceSave(bytes: ByteArray, reason: String) {
         backup(reason)
         GameStorage.writeAtomically(saveFile, bytes)
