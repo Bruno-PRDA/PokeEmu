@@ -133,6 +133,41 @@ class Gen4Test {
         assertFailsWith<Gen4SaveException> { Gen4Save.parse(ByteArray(Gen4Save.FILE_SIZE) { 0xFF.toByte() }) }
     }
 
+    @Test fun messageFileRoundTrip() {
+        // Build an encrypted bank with the documented scheme and check decode.
+        val strings = listOf("", "Bulbasaur", "Mr. Mime")
+        val seed = 0x1234
+        val header = 4 + strings.size * 8
+        val out = ByteArray(header + strings.sumOf { it.length * 2 })
+        out.put16(0, strings.size); out.put16(2, seed)
+        var at = header
+        strings.forEachIndexed { i, s ->
+            val k = (seed * 0x2FD * (i + 1)) and 0xFFFF
+            val key = k.toLong() or (k.toLong() shl 16)
+            out.put32(4 + i * 8, at.toLong() xor key); out.put32(8 + i * 8, s.length.toLong() xor key)
+            val plain = Gen4Text.encode(s + " ", s.length + 1)
+            var ck = (0x91BD3 * (i + 1)) and 0xFFFF
+            for (j in s.indices) { out.put16(at + j * 2, plain.u16(j * 2) xor ck); ck = (ck + 0x493D) and 0xFFFF }
+            at += s.length * 2
+        }
+        assertEquals(strings, Gen4Messages.decode(out))
+    }
+
+    /** Optional: POKEEMU_TEST_ROMS4=<folder of .nds> prints names read from real DS ROMs. */
+    @Test fun realRomsIfProvided() {
+        val dir = System.getenv("POKEEMU_TEST_ROMS4")?.let(::File) ?: return
+        for (f in dir.listFiles { x -> x.extension.equals("nds", true) }.orEmpty()) {
+            val data = FileRomSource(f).use { Gen4RomData.scan(it) }
+            println("${f.name}: ${data.speciesNames.size} species, ${data.moveNames.size} moves")
+            println("   species 1..6: ${(1..6).map(data::species)}  last: ${data.speciesNames.takeLast(4)}")
+            println("   moves 1..4: ${(1..4).map(data::move)}  last: ${data.moveNames.takeLast(3)}")
+            val unknown = data.speciesNames.count { '?' in it }
+            println("   names with unknown characters: $unknown")
+            println("   494..500: ${(494..500).map(data::species)} 650..652: ${(650..652).map(data::species)} 900..912: ${(900..912).map(data::species)}")
+            assertEquals("bulbasaur", data.species(1).lowercase())
+        }
+    }
+
     /** Optional: POKEEMU_TEST_SAVES4=<folder of .sav> prints what real Gen 4 saves contain. */
     @Test fun realSavesIfProvided() {
         val dir = System.getenv("POKEEMU_TEST_SAVES4")?.let(::File) ?: return

@@ -49,12 +49,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.pokeemu.app.RomDataStore
 import com.pokeemu.app.RomEntry
 import com.pokeemu.app.RomLibrary
 import com.pokeemu.gen3.Gen3Save
 import com.pokeemu.gen3.Gen3SaveException
 import com.pokeemu.saves.GameStorage
 import com.pokeemu.saves.Platform
+import com.pokeemu.gen4.Gen4RomData
 import com.pokeemu.gen4.Gen4Save
 import com.pokeemu.gen4.Gen4SaveException
 import com.pokeemu.saves.SaveManager
@@ -76,6 +78,10 @@ private data class SaveState(
     val dsSaveSize: Long? = null,
     /** Gen 4 summary for DS saves (null when not a DS save). */
     val gen4: Result<Gen4Save>? = null,
+    /** Species/move names read from the DS ROM (hacks have their own numbering and fakemon). */
+    val gen4Names: Gen4RomData? = null,
+    /** Pokémon stored across all PC boxes of a Gen 4 save. */
+    val pcCount: Int = 0,
 )
 
 /** A confirmation the user must accept before something replaces their save. */
@@ -88,6 +94,7 @@ fun SaveManagerScreen(rom: RomEntry, onBack: () -> Unit, onEditPokemon: () -> Un
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var manager by remember { mutableStateOf<SaveManager?>(null) }
+    var localRom by remember { mutableStateOf<RomLibrary.LocalRom?>(null) }
     var state by remember { mutableStateOf<SaveState?>(null) }
     var confirm by remember { mutableStateOf<Confirm?>(null) }
     var newSlotDialog by remember { mutableStateOf(false) }
@@ -98,6 +105,7 @@ fun SaveManagerScreen(rom: RomEntry, onBack: () -> Unit, onEditPokemon: () -> Un
     suspend fun refresh() {
         val m = manager ?: return
         state = withContext(Dispatchers.IO) {
+            val gen4 = if (m.hasSave && isDs) runCatching { Gen4Save.parse(m.saveFile.readBytes()) } else null
             SaveState(
                 slots = m.slots(),
                 activeSlot = m.activeSlot,
@@ -105,7 +113,9 @@ fun SaveManagerScreen(rom: RomEntry, onBack: () -> Unit, onEditPokemon: () -> Un
                 hasSave = m.hasSave,
                 summary = if (m.hasSave && !isDs) runCatching { Gen3Save.parse(m.saveFile.readBytes()) } else null,
                 dsSaveSize = if (m.hasSave && isDs) m.saveFile.length() else null,
-                gen4 = if (m.hasSave && isDs) runCatching { Gen4Save.parse(m.saveFile.readBytes()) } else null,
+                gen4 = gen4,
+                gen4Names = if (gen4?.isSuccess == true) localRom?.let { RomDataStore(GameStorage(context.filesDir)).gen4(it.id, it.file) } else null,
+                pcCount = gen4?.getOrNull()?.let { save -> (0 until save.layout.boxCount).sumOf { b -> save.box(b).count { it != null } } } ?: 0,
             )
         }
     }
@@ -125,8 +135,9 @@ fun SaveManagerScreen(rom: RomEntry, onBack: () -> Unit, onEditPokemon: () -> Un
     }
 
     LaunchedEffect(rom.uri) {
-        val id = withContext(Dispatchers.IO) { RomLibrary(context).localCopy(rom.uri).id }
-        manager = SaveManager(GameStorage(context.filesDir), id)
+        val local = withContext(Dispatchers.IO) { RomLibrary(context).localCopy(rom.uri) }
+        localRom = local
+        manager = SaveManager(GameStorage(context.filesDir), local.id)
         refresh()
     }
 
@@ -269,7 +280,14 @@ private fun SummaryCard(s: SaveState, onEditPokemon: () -> Unit) {
                             for (pk in save.party) {
                                 AssistChip(onClick = {}, label = {
                                     Text(buildString {
-                                        append(if (pk.isEgg) "Egg" else pk.nickname.ifBlank { "#${pk.species}" })
+                                        val species = s.gen4Names?.species(pk.species)
+                                        when {
+                                            pk.isEgg -> append("Egg")
+                                            species == null -> append(pk.nickname.ifBlank { "#${pk.species}" })
+                                            pk.isNicknamed && pk.nickname.isNotBlank() && !pk.nickname.equals(species, true) ->
+                                                append("${pk.nickname} ($species)")
+                                            else -> append(species)
+                                        }
                                         pk.level?.let { append(" Lv$it") }
                                         if (pk.isShiny) append(" ★")
                                     })
@@ -277,6 +295,10 @@ private fun SummaryCard(s: SaveState, onEditPokemon: () -> Unit) {
                             }
                         }
                     }
+                    Text(
+                        "PC: %d Pokémon in %d boxes".format(s.pcCount, save.layout.boxCount),
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
                     Text("Gen 4 editing comes later.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
                 }
                 s.dsSaveSize != null -> {
