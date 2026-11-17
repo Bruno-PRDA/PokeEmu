@@ -106,7 +106,7 @@ fun SaveManagerScreen(rom: RomEntry, onBack: () -> Unit, onEditPokemon: () -> Un
     suspend fun refresh() {
         val m = manager ?: return
         state = withContext(Dispatchers.IO) {
-            val gen4 = if (m.hasSave && isDs) runCatching { Gen4Save.parse(m.saveFile.readBytes()) } else null
+            val gen4 = if (m.hasSave && isDs && rom.header.pokemonTools) runCatching { Gen4Save.parse(m.saveFile.readBytes()) } else null
             SaveState(
                 slots = m.slots(),
                 activeSlot = m.activeSlot,

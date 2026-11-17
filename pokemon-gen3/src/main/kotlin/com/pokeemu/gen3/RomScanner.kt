@@ -42,26 +42,88 @@ class RomScanner(private val rom: ByteArray) {
             names("move names", listOf("POUND", "KARATE CHOP", "DOUBLESLAP"), firstIndex = 1, maxLen = 16, max = 1024,
                 altAnchors = listOf("POUND", "KARATE CHOP", "DOUBLE SLAP")),
             names("ability names", listOf("STENCH", "DRIZZLE", "SPEED BOOST"), firstIndex = 1, maxLen = 16, max = 512),
-            names("item names", listOf("MASTER BALL", "ULTRA BALL", "GREAT BALL"), firstIndex = 1, maxLen = 20, max = 2048),
+            // pokeemerald-expansion reorders the balls: Poké, Great, Ultra, Master.
+            names("item names", listOf("MASTER BALL", "ULTRA BALL", "GREAT BALL"), firstIndex = 1, maxLen = 20, max = 2048, skipDamaged = true,
+                altAnchors = listOf("POKé BALL", "GREAT BALL", "ULTRA BALL")),
         ).map(::trimAtNextTable)
         tables.forEach { report += it.description() }
         val (species, moves, abilities, items) = tables.map { it.names }
         val base = baseStats(species.size.coerceAtLeast(412))
-        val moveData = moveData(moves.size.coerceAtLeast(355))
+        val moveData = moveData(moves.size.coerceAtLeast(355)) ?: tables[1].table?.let { moveRecords(it, moves.size) }
         val pp = moveData?.pp.orEmpty()
-        val learnsets = LearnsetScanner(
+        val speciesCount = species.size.takeIf { it > 0 } ?: 412
+        val moveCount = moves.size.takeIf { it > 0 } ?: 355
+        // pokeemerald-expansion: one big record per species (big entries, the name inside it).
+        val records = baseTable?.takeIf { (b, stride) ->
+            stride >= 100 && tables[0].table?.let { !it.pointers && it.stride == stride && it.base in b until b + stride } == true
+        }?.let { (b, stride) -> ExpansionSpecies(rom, b, stride, speciesCount, moveCount) }
+        val genericReport = mutableListOf<String>()
+        val generic = LearnsetScanner(
             rom, referenced,
-            speciesCount = species.size.takeIf { it > 0 } ?: 412,
-            moveCount = moves.size.takeIf { it > 0 } ?: 355,
+            speciesCount = speciesCount,
+            moveCount = moveCount,
             itemNames = items,
             itemTable = tables[3].table?.takeIf { !it.pointers }?.let { it.base to it.stride },
-        ).scan(report).takeIf { it.has.isNotEmpty() }
-        val sprites = Gen3Sprites.scan(rom, referenced, species.size.takeIf { it > 0 } ?: 412, report)
+        ).scan(genericReport)
+        val learnsets = if (records == null) generic.also { report += genericReport } else {
+            // Each part from the species records when they have it, else from the engine's own tables.
+            val parts = records.learnsets(referenced)
+            val levelUp = parts.levelUp.ifEmpty { generic.levelUp }
+            val evolutions = parts.evolutions.ifEmpty { generic.evolutions }
+            // Per-species teachable lists are what these engines use; a TM table found next to them is
+            // usually a leftover from the base game.
+            val teach = parts.teachable
+            val tm = if (teach != null) com.pokeemu.core.Learnsets() else generic
+            val teachMoves = teach?.flatten()?.distinct()?.sorted().orEmpty()
+            val index = teachMoves.withIndex().associate { (i, m) -> m to i }
+            report += if (levelUp.isNotEmpty()) "Found level-up moves" else "Could not find level-up moves"
+            report += if (evolutions.isNotEmpty()) "Found evolutions" else "Could not find evolutions"
+            report += if (generic.eggMoves.isNotEmpty()) "Found egg moves for ${generic.eggMoves.size} species" else "Could not find egg moves"
+            report += when {
+                teach != null -> "Found TM and tutor moves (one list per species)"
+                tm.tmMoves.isNotEmpty() -> "Found TM/HM moves: ${tm.tmMoves.size - tm.hmCount} TMs, ${tm.hmCount} HMs"
+                else -> "Could not find TM/HM compatibility"
+            }
+            com.pokeemu.core.Learnsets(
+                levelUp, tm.tmMoves, tm.hmCount, tm.tmCompat, generic.eggMoves,
+                teachMoves.ifEmpty { generic.tutorMoves },
+                teach?.map { l -> java.util.BitSet().apply { l.forEach { set(index.getValue(it)) } } } ?: generic.tutorCompat,
+                evolutions, tutorIncludesTms = teach != null,
+            )
+        }
+        val usable = learnsets.takeIf { it.has.isNotEmpty() }
+        val sprites = Gen3Sprites.scan(rom, referenced, speciesCount, report).let { found ->
+            if (found.hasPokemon) found
+            else records?.sprites()?.let { it.copy(itemIcons = found.itemIcons, itemIconCount = found.itemIconCount) }
+                ?.also { report += "Found Pokémon sprites in the species records" } ?: found
+        }.let { found ->
+            // Newer expansion keeps each item's icon in its item record: prefer that.
+            itemRecordIcons(tables[3].table, items.size)?.let { (at, delta) ->
+                report += "Found item icons in the item records"
+                found.copy(itemIcons = at, itemIconCount = items.size, itemStride = tables[3].table!!.stride, itemPaletteDelta = delta)
+            } ?: found
+        }
         return RomData(
-            species, moves, abilities, items, base, pp, report.toList(), learnsets,
+            species, moves, abilities, items, base, pp, report.toList(), usable,
             moveData?.power.orEmpty(), moveData?.type.orEmpty(), moveData?.accuracy.orEmpty(), moveData?.category.orEmpty(),
             sprites,
         )
+    }
+
+    /** Item records holding their icon: (items[0]'s picture-pointer field, palette field - picture field). */
+    private fun itemRecordIcons(t: Table?, count: Int): Pair<Int, Int>? {
+        if (t == null || t.pointers || t.stride < 48 || count < 10) return null
+        fun lz(item: Int, off: Int): Int {
+            val p = romOffset(rom.u32(t.base + t.stride * item + off).takeIf { t.base + t.stride * item + off + 4 <= rom.size } ?: return -1) ?: return -1
+            return if (p + 4 <= rom.size && rom[p].toInt() == 0x10) rom.u8(p + 1) or (rom.u8(p + 2) shl 8) or (rom.u8(p + 3) shl 16) else -1
+        }
+        val items = listOf(1, 2, 3, 4)
+        for (pic in 0..t.stride - 4 step 4) {
+            if (!items.all { lz(it, pic) == 0x120 }) continue
+            val pal = (0..t.stride - 4 step 4).firstOrNull { o -> items.all { lz(it, o) == 0x20 } } ?: continue
+            return (t.base + pic) to (pal - pic)
+        }
+        return null
     }
 
     private class NameTable(val what: String, val table: Table?, val names: List<String>) {
@@ -92,10 +154,11 @@ class RomScanner(private val rom: ByteArray) {
     private fun names(
         what: String, anchors: List<String>, firstIndex: Int, maxLen: Int, max: Int,
         altAnchors: List<String>? = null,
+        skipDamaged: Boolean = false,
     ): NameTable {
         val variants = listOfNotNull(anchors, altAnchors).flatMap { listOf(it, it.map(::titleCase)) }.distinct()
         val candidates = variants.flatMap { v -> findInline(v, firstIndex) + findPointers(v, firstIndex) }.distinct()
-            .map { it to readNames(it, maxLen, max) }
+            .map { it to readNames(it, maxLen, max, skipDamaged) }
             .filter { (_, names) -> names.size > firstIndex + 2 }
         // The table the game uses is the one its code points to; otherwise the biggest.
         val (table, names) = candidates.maxWithOrNull(compareBy({ referenced[it.first.base] }, { it.second.size }))
@@ -148,15 +211,27 @@ class RomScanner(private val rom: ByteArray) {
         return out
     }
 
-    private fun readNames(t: Table, maxLen: Int, max: Int): List<String> {
+    /** With [skipDamaged], a few unreadable entries are kept as blanks when real names follow (item tables). */
+    private fun readNames(t: Table, maxLen: Int, max: Int, skipDamaged: Boolean = false): List<String> {
         val out = mutableListOf<String>()
-        for (i in 0 until max) {
+        fun nameAt(i: Int): String? {
             val slot = t.base + i * t.stride
-            if (slot + 4 > rom.size) break
+            if (slot + 4 > rom.size) return null
             val at = if (t.pointers) romOffset(rom.u32(slot)) else slot
-            val name = at?.let { readText(it, maxLen) }
+            return at?.let { readText(it, maxLen) }
+        }
+        var damaged = 0
+        for (i in 0 until max) {
+            if (t.base + i * t.stride + 4 > rom.size) break
+            val name = nameAt(i)
             if (name == null) {
                 if (i < t.firstIndex) { out += ""; continue } // placeholder entry 0 may be anything
+                // Hacks reuse slots and leave a damaged entry: skip it when real names follow.
+                // Reserved slots are all zeros (Emerald Rogue keeps runs of them between item groups).
+                val slot = t.base + i * t.stride
+                val empty = !t.pointers && (0 until minOf(t.stride, maxLen)).all { slot + it < rom.size && rom[slot + it].toInt() == 0 }
+                if (skipDamaged && empty && (1..32).any { k -> !nameAt(i + k).isNullOrBlank() }) { out += ""; continue }
+                if (skipDamaged && damaged < 8 && (1..4).all { k -> !nameAt(i + k).isNullOrBlank() }) { damaged++; out += ""; continue }
                 break
             }
             out += name
@@ -207,6 +282,12 @@ class RomScanner(private val rom: ByteArray) {
     /** How many facts must agree before we trust a field offset (60%). */
     private val quorum = (facts.size * 3 + 4) / 5
 
+    /** Newer expansion engines number types from 1; values are stored shifted back to the classic numbers. */
+    private var typeShift = 0
+
+    /** Where the base stats were found (species 0's entry, entry size). */
+    private var baseTable: Pair<Int, Int>? = null
+
     private fun baseStats(count: Int): List<BaseStats?> {
         val (b1, b2, b3) = facts.take(3).map { f -> ByteArray(6) { f.stats[it].toByte() } }
         val others = facts.drop(3)
@@ -224,6 +305,7 @@ class RomScanner(private val rom: ByteArray) {
         }
         // The table the code points to is the one in use (hacks leave the old one behind).
         (candidates.firstOrNull { referenced[it.first] } ?: candidates.firstOrNull())?.let { (base, stride) ->
+            baseTable = base to stride
             return readBaseStats(base, stride, count)
         }
         report += "Could not find base stats — level/stat recalculation is disabled"
@@ -239,6 +321,7 @@ class RomScanner(private val rom: ByteArray) {
                 .maxByOrNull { it.second }?.first
 
         val typeOff: Int?
+        var typeShift = 0
         val genderOff: Int?
         val growthOff: Int?
         val abilityOff: Int?
@@ -249,17 +332,30 @@ class RomScanner(private val rom: ByteArray) {
             typeOff = 6; genderOff = 16; growthOff = 19; abilityOff = 22; abilityWide = false
             layout = "vanilla layout"
         } else {
-            typeOff = vote(6 until stride - 1) { f, o -> at(f, o) == f.t1 && at(f, o + 1) == f.t2 }
+            // Newer pokeemerald-expansion numbers types from 1 ("no type" is 0): allow that shift.
+            var types: Int? = null
+            for (k in 0..1) {
+                types = vote(6 until stride - 1) { f, o -> at(f, o) == f.t1 + k && at(f, o + 1) == f.t2 + k }
+                if (types != null) { typeShift = k; break }
+            }
+            typeOff = types
             genderOff = vote(6 until stride) { f, o -> at(f, o) == f.gender }
-            growthOff = genderOff?.let { g -> vote(g + 1 until stride) { f, o -> at(f, o) == f.growth } }
+            // Growth follows gender, egg cycles and friendship. Some hacks give every species the
+            // same rate (The Pit), so when no offset agrees with the facts, use that usual spot.
+            growthOff = genderOff?.let { g ->
+                vote(g + 1 until minOf(stride, g + 8)) { f, o -> at(f, o) == f.growth }
+                    ?: (g + 3).takeIf { o -> o < stride && facts.all { at(it, o) in 0..5 } }
+            }
             abilityOff = vote(6 until stride - 1) { f, o -> at(f, o) == f.ability }
             // Expansion-style structs store abilities as u16 (high byte 0 for these early abilities).
             abilityWide = abilityOff != null && facts.count { at(it, abilityOff + 1) == 0 } >= quorum
             layout = "custom layout"
         }
 
+        this.typeShift = typeShift
         report += "Found base stats: entry size $stride at 0x%06X, %s (types %s, gender %s, growth %s, abilities %s)".format(
-            base, layout, typeOff ?: "?", genderOff ?: "?", growthOff ?: "?",
+            base, layout, typeOff?.let { if (typeShift > 0) "$it (numbered from $typeShift)" else "$it" } ?: "?", genderOff ?: "?",
+            growthOff ?: "?",
             abilityOff?.let { "$it${if (abilityWide) " (16-bit)" else ""}" } ?: "?",
         )
 
@@ -272,7 +368,8 @@ class RomScanner(private val rom: ByteArray) {
             } ?: 0
             BaseStats(
                 stats = List(6) { rom.u8(e + it) },
-                type1 = u8(typeOff), type2 = typeOff?.let { u8(it + 1) } ?: 0,
+                type1 = (u8(typeOff) - typeShift).coerceAtLeast(0),
+                type2 = typeOff?.let { (u8(it + 1) - typeShift).coerceAtLeast(0) } ?: 0,
                 genderRatio = genderOff?.let { u8(it) } ?: 127,
                 growthRate = growthOff?.let { u8(it) } ?: 0,
                 ability1 = ability(0), ability2 = ability(1),
@@ -298,7 +395,23 @@ class RomScanner(private val rom: ByteArray) {
                 }
             }
         }
-        (candidates.firstOrNull { referenced[it.first] } ?: candidates.firstOrNull())?.let { (base, stride) ->
+        // Hacks rebalance moves (Karate Chop, Double Slap...): also accept Pound followed by
+        // move-like entries, at the usual sizes.
+        for (p in occurrences(p1, limit = 256)) for (stride in listOf(12, 16, 20, 24, 28)) {
+            val base = p - stride
+            if (base < 0 || (2..40).any { m -> !(base + m * stride + 4 <= rom.size && rom.u8(base + m * stride + 1) < 32 &&
+                    rom.u8(base + m * stride + 2) <= 101 && rom.u8(base + m * stride + 3) in 1..64) }) continue
+            candidates += base to stride
+        }
+        // Hacks often keep the old 355-move table (still referenced) next to their expanded one:
+        // pick the table whose entries look like moves for every move name, then a referenced one.
+        fun plausible(base: Int, stride: Int, m: Int): Boolean {
+            val e = base + m * stride
+            if (e + 4 > rom.size) return false
+            val type = rom.u8(e + 1); val acc = rom.u8(e + 2); val pp = rom.u8(e + 3)
+            return type < 32 && acc <= 101 && pp in 1..64
+        }
+        candidates.maxWithOrNull(compareBy<Pair<Int, Int>>({ (b, s) -> (1 until count).count { plausible(b, s, it) } }, { referenced[it.first] }))?.let { (base, stride) ->
             // base points at move 0's power: power, type, accuracy, pp follow.
             fun field(m: Int, off: Int) = rom.getOrNull(base + off + m * stride)?.toInt()?.and(0xFF) ?: 0
             // Hacks with the physical/special split store it in a spare byte: find the one where known moves agree.
@@ -313,8 +426,35 @@ class RomScanner(private val rom: ByteArray) {
                 category = if (splitAt != null) List(count) { field(it, splitAt) } else emptyList(),
             )
         }
-        report += "Could not find move PP — new moves get 5 PP"
         return null
+    }
+
+    /**
+     * Newer pokeemerald-expansion: one record per move (the move-name table points into it),
+     * with type (5 bits), category (2 bits) and power (9 bits) packed into one u16,
+     * then accuracy and, two bytes on, PP.
+     */
+    private fun moveRecords(t: Table, count: Int): MoveData? {
+        if (!t.pointers || t.stride < 24 || count < 355) { report += "Could not find move PP — new moves get 5 PP"; return null }
+        fun e(m: Int) = t.base + m * t.stride
+        fun bits(m: Int, k: Int) = if (e(m) + k + 5 <= rom.size) rom.u16(e(m) + k) else -1
+        // (move, power, accuracy, pp, category): Pound, Flamethrower (90 or 95), Earthquake.
+        val known = listOf(Triple(1, 40, 0), Triple(89, 100, 0))
+        val k = (4..t.stride - 6 step 2).firstOrNull { k ->
+            known.all { (m, power, cat) -> bits(m, k).let { v -> v >= 0 && v shr 7 == power && (v shr 5) and 3 == cat } } &&
+                rom.u8(e(1) + k + 2) == 100 && rom.u8(e(1) + k + 4) == 35 && rom.u8(e(89) + k + 4) == 10 &&
+                bits(53, k).let { v -> (v shr 7) in setOf(90, 95) && (v shr 5) and 3 == 1 }
+        }
+        if (k == null) { report += "Could not find move PP — new moves get 5 PP"; return null }
+        val shift = bits(1, k) and 31 // Pound is Normal: 0, or 1 when types are numbered from 1
+        report += "Found move data: entry size ${t.stride} (move records, with physical/special split)"
+        return MoveData(
+            pp = List(count) { m -> if (e(m) + k + 5 <= rom.size) rom.u8(e(m) + k + 4) else 0 },
+            power = List(count) { m -> bits(m, k).coerceAtLeast(0) shr 7 },
+            type = List(count) { m -> ((bits(m, k).coerceAtLeast(0) and 31) - shift).coerceAtLeast(0) },
+            accuracy = List(count) { m -> if (e(m) + k + 3 <= rom.size) rom.u8(e(m) + k + 2) else 0 },
+            category = List(count) { m -> (bits(m, k).coerceAtLeast(0) shr 5) and 3 },
+        )
     }
 
     // ---- byte search ----------------------------------------------------------------------

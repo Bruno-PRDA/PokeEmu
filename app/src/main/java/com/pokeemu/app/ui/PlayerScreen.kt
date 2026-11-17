@@ -273,7 +273,8 @@ fun PauseMenu(
     onCheats: () -> Unit = {},
     onEditControls: () -> Unit = {},
     onSetCover: () -> Unit = {},
-    onChallenges: () -> Unit = {},
+    /** Null hides the button (games without Pokemon tools). */
+    onChallenges: (() -> Unit)? = {},
     /** DS only: current screen layout (null hides the picker). */
     dsLayout: DsLayout? = null,
     onDsLayout: (DsLayout) -> Unit = {},
@@ -302,7 +303,7 @@ fun PauseMenu(
                     }
                 }
                 FilledTonalButton(onClick = onCheats, Modifier.fillMaxWidth()) { Text("Cheats") }
-                FilledTonalButton(onClick = onChallenges, Modifier.fillMaxWidth()) { Text("Challenges") }
+                if (onChallenges != null) FilledTonalButton(onClick = onChallenges, Modifier.fillMaxWidth()) { Text("Challenges") }
                 FilledTonalButton(onClick = onEditControls, Modifier.fillMaxWidth()) { Text("Edit controls") }
                 FilledTonalButton(onClick = onSetCover, Modifier.fillMaxWidth()) { Text("Use this screen as cover") }
                 FilledTonalButton(onClick = onReset, Modifier.fillMaxWidth()) { Text("Reset game") }

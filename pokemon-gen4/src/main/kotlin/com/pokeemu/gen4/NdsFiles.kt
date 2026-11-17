@@ -153,3 +153,68 @@ class Narc private constructor(private val bytes: ByteArray, private val ranges:
         }
     }
 }
+
+/**
+ * The game's main code (ARM9), decompressed when the cartridge stores it
+ * compressed (retail HeartGold/SoulSilver do; most hacks and Diamond/Pearl/
+ * Platinum don't). Tables such as the TM list and item icons live in it.
+ */
+object Arm9 {
+    private const val MAX_SIZE = 8 shl 20
+
+    fun read(rom: RomSource): ByteArray {
+        val header = rom.read(0, 0x30)
+        val raw = rom.read(header.u32(0x20), header.u32(0x2C).toInt().coerceIn(0, MAX_SIZE))
+        val ramAddress = header.u32(0x28)
+        return runCatching { decompress(raw, ramAddress) }.getOrNull() ?: raw
+    }
+
+    /**
+     * Uses the module parameters (found by their "nitrocode" magic) to find
+     * where the compressed part ends; null when the code isn't compressed.
+     */
+    internal fun decompress(arm9: ByteArray, ramAddress: Long): ByteArray? {
+        val magic = byteArrayOf(0x21, 0x06, 0xC0.toByte(), 0xDE.toByte(), 0xDE.toByte(), 0xC0.toByte(), 0x06, 0x21)
+        var m = 0
+        while (m + 8 <= minOf(arm9.size, 0x8000) && !(0 until 8).all { arm9[m + it] == magic[it] }) m += 4
+        if (m + 8 > minOf(arm9.size, 0x8000) || m < 8) return null
+        val compressedEnd = arm9.u32(m - 8)
+        if (compressedEnd == 0L) return null
+        val end = (compressedEnd - ramAddress).toInt()
+        if (end <= 8 || end > arm9.size) return null
+        return blz(arm9.copyOfRange(0, end))?.plus(arm9.copyOfRange(end, arm9.size))
+    }
+
+    /** Nintendo's "backward LZ": the compressed bytes are read from the end towards the start. */
+    internal fun blz(pak: ByteArray): ByteArray? {
+        val n = pak.size
+        val incLen = pak.u32(n - 4).toInt()
+        if (incLen <= 0 || incLen > MAX_SIZE) return null
+        val hdrLen = pak[n - 5].toInt() and 0xFF
+        val encLen = pak.u32(n - 8).toInt() and 0xFFFFFF
+        if (encLen > n || hdrLen > encLen) return null
+        val decLen = n - encLen // plain prefix
+        val packed = pak.copyOfRange(decLen, decLen + encLen - hdrLen).reversedArray()
+        val rawLen = encLen + incLen
+        val raw = ByteArray(rawLen)
+        var p = 0; var r = 0; var flags = 0; var mask = 0
+        while (r < rawLen) {
+            mask = mask ushr 1
+            if (mask == 0) { if (p >= packed.size) break; flags = packed[p++].toInt() and 0xFF; mask = 0x80 }
+            if (flags and mask == 0) {
+                if (p >= packed.size) break
+                raw[r++] = packed[p++]
+            } else {
+                if (p + 1 >= packed.size) break
+                val pos = ((packed[p].toInt() and 0xFF) shl 8) or (packed[p + 1].toInt() and 0xFF); p += 2
+                var len = (pos ushr 12) + 3
+                if (r + len > rawLen) len = rawLen - r
+                val back = (pos and 0xFFF) + 3
+                if (back > r) return null
+                repeat(len) { raw[r] = raw[r - back]; r++ }
+            }
+        }
+        raw.reverse()
+        return pak.copyOfRange(0, decLen) + raw
+    }
+}

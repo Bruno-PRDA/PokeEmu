@@ -48,7 +48,7 @@ class Gen4Sprites private constructor(
     override fun item(item: Int): Picture? = synchronized(this) { itemLocked(item) }
 
     private fun itemLocked(item: Int): Picture? {
-        val narc = narc(ITEM_ICONS) ?: return null
+        val narc = ITEM_ICONS.firstNotNullOfOrNull(::narc) ?: return null
         val (icon, pal) = if (itemTable != null) {
             if (8 * item + 8 > itemTable.size) return null
             itemTable.u16(8 * item + 2) to itemTable.u16(8 * item + 4)
@@ -92,7 +92,8 @@ class Gen4Sprites private constructor(
             // (front, palette), (back, palette), (shiny front, shiny palette), (shiny back, shiny palette)
             8 to Layout(fronts = listOf(0), palette = 1, shinyPalette = 5),
         )
-        private const val ITEM_ICONS = "a/0/1/8"
+        /** HeartGold/SoulSilver, then Diamond/Pearl/Platinum. */
+        private val ITEM_ICONS = listOf("a/0/1/8", "itemtool/itemdata/item_icon.narc")
 
         fun open(rom: RomSource): Gen4Sprites {
             val fs = NdsFileSystem(rom)
@@ -109,8 +110,7 @@ class Gen4Sprites private constructor(
 
         /** The ARM9 item table: 4 u16 per item (data, icon, palette, GBA item), item 1 = (1, 2, 3, 1). */
         private fun itemTable(rom: RomSource): ByteArray? {
-            val header = rom.read(0, 0x30)
-            val arm9 = rom.read(header.u32(0x20), header.u32(0x2C).toInt().coerceAtMost(8 shl 20))
+            val arm9 = Arm9.read(rom)
             val pattern = byteArrayOf(1, 0, 2, 0, 3, 0, 1, 0)
             var i = 8
             while (i + 8 <= arm9.size) {

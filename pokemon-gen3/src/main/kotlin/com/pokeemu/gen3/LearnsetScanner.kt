@@ -207,6 +207,7 @@ internal class LearnsetScanner(
         // Move description tables, anchored on HMs every game keeps (Cut, Fly, Surf, Strength).
         val anchors = listOf(1 to 15, 2 to 19, 3 to 57, 4 to 70)
         val tables = anchors.flatMap { (hm, move) -> where[hms[hm]].orEmpty().map { it - 4 * (move - 1) } }.distinct()
+            .ifEmpty { descriptionRuns(where.values.flatten()) } // no HMs (Radical Red): find the table by its shape
         fun resolve(table: Int): Map<Int, Int> = buildMap {
             for ((n, d) in tms) where[d]?.firstOrNull { it >= table && it < table + 4 * moveCount }?.let { put(index(false, n), (it - table) / 4 + 1) }
             for ((n, d) in hms) where[d]?.firstOrNull { it >= table && it < table + 4 * moveCount }?.let { put(index(true, n), (it - table) / 4 + 1) }
@@ -216,21 +217,59 @@ internal class LearnsetScanner(
         tables.map(::resolve).sortedByDescending { it.size }.take(2).forEach { r -> r.forEach { (k, v) -> known.putIfAbsent(k, v) } }
         if (known.size < size / 3) return null
 
-        // The game's own list: a u16 array matching every resolved TM.
-        val first = known.minByOrNull { it.key }!!
-        var at = 0
-        while (at + 2 <= rom.size) {
-            if (rom.u16(at) == first.value) {
-                val start = at - 2 * first.key
-                if (start >= 0 && start + 2 * size <= rom.size && known.all { (i, m) -> rom.u16(start + 2 * i) == m }) {
-                    val list = List(size) { rom.u16(start + 2 * it) }
-                    if (list.all { it in 1 until moveCount }) return list to hmCount
+        // The game's own list: a u16 array agreeing with (nearly) every resolved TM. Some hacks
+        // give a TM item an old move's description (Radical Red), so a few may disagree.
+        var best: List<Int>? = null
+        var bestScore = known.size * 9 / 10 - 1
+        for ((key, value) in known.entries.sortedBy { it.key }.take(3)) {
+            var at = 0
+            while (at + 2 <= rom.size) {
+                if (rom.u16(at) == value) {
+                    val start = at - 2 * key
+                    if (start >= 0 && start + 2 * size <= rom.size) {
+                        val score = known.count { (i, m) -> rom.u16(start + 2 * i) == m }
+                        if (score > bestScore) {
+                            val list = List(size) { rom.u16(start + 2 * it) }
+                            if (list.all { it in 1 until moveCount }) { best = list; bestScore = score }
+                        }
+                    }
                 }
+                at += 2
             }
-            at += 2
+            if (best != null) return best to hmCount
         }
         // No such array: usable only if every TM was resolved.
         return if (known.size == size) List(size) { known.getValue(it) } to hmCount else null
+    }
+
+    /**
+     * Move description tables around [hits] (places a TM's description pointer appears):
+     * runs of text pointers about as long as the move list. Returns where move 1's entry is.
+     */
+    private fun descriptionRuns(hits: List<Int>): List<Int> {
+        // A description: readable text (letters, spaces, line breaks) ending in a terminator.
+        fun isText(at: Int): Boolean {
+            var n = 0
+            while (n < 200 && at + n < rom.size) {
+                val b = rom.u8(at + n)
+                if (b == Gen3Text.TERMINATOR) return n >= 3
+                if (!Gen3Text.isChar(b) && b != 0xFE) return false
+                n++
+            }
+            return false
+        }
+        fun isPointer(o: Int) = o >= 0 && o + 4 <= rom.size && romOffset(rom.u32(o))?.let(::isText) == true
+        val found = HashMap<Int, Int>() // run start -> TM descriptions inside
+        for (q in hits) {
+            if (q % 4 != 0) continue
+            var s = q
+            while (isPointer(s - 4) && q - s < 4 * (moveCount + 64)) s -= 4
+            var e = q
+            while (isPointer(e + 4) && e - s < 4 * (moveCount + 64)) e += 4
+            val length = (e - s) / 4 + 1
+            if (length * 10 >= (moveCount - 1) * 7 && length <= moveCount + 64) found.merge(s, 1, Int::plus)
+        }
+        return found.entries.sortedByDescending { it.value }.map { it.key }.take(2)
     }
 
     private fun tmDataByHms(): Triple<List<Int>, Int, List<BitSet>>? {

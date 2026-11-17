@@ -350,9 +350,10 @@ private fun GameOptions(
         HorizontalDivider(Modifier.padding(vertical = 8.dp))
         Option(Icons.Default.PlayArrow, "Play") { onAction(onOpen) }
         Option(Icons.Default.Save, "Save manager") { onAction(onManageSaves) }
-        Option(Icons.Default.Edit, "Edit Pokémon") { onAction(onEditPokemon) }
+        // Black, White and other DS games the Pokemon tools don't understand only play.
+        if (rom.header.pokemonTools) Option(Icons.Default.Edit, "Edit Pokémon") { onAction(onEditPokemon) }
         Option(Icons.Default.Code, "Cheats") { onAction(onCheats) }
-        Option(Icons.Default.EmojiEvents, "Challenges") { onAction(onChallenges) }
+        if (rom.header.pokemonTools) Option(Icons.Default.EmojiEvents, "Challenges") { onAction(onChallenges) }
         Option(Icons.Default.Image, "Change cover picture") { onAction(onChangeCover) }
         if (hasCustomCover) Option(Icons.Default.HideImage, "Remove cover picture") { onAction(onRemoveCover) }
         Option(Icons.Default.Delete, "Remove game") { onAction(onRemove) }

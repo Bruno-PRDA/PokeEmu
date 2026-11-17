@@ -1,6 +1,8 @@
 package com.pokeemu.saves
 
 import kotlin.test.Test
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
@@ -46,6 +48,14 @@ class RomHeaderTest {
         assertEquals(Platform.NDS, h.platform)
         rom[0x20] = 1 // header changed, CRC no longer matches
         assertNull(NdsHeader.parse(rom))
+    }
+
+    @Test fun pokemonToolsOnlyForGamesTheyUnderstand() {
+        fun ds(code: String) = RomHeader("POKEMON", code, "01", 0, Platform.NDS)
+        assertTrue(RomHeader("POKEMON FIRE", "BPRE", "01", 0).pokemonTools)
+        for (code in listOf("ADAE", "APAE", "CPUE", "IPKE", "IPGE", "IPKJ")) assertTrue(ds(code).pokemonTools, code)
+        // Black, White, Black 2: they play, without the Gen 4 tools.
+        for (code in listOf("IRBO", "IRAO", "IREO", "IRDO")) assertFalse(ds(code).pokemonTools, code)
     }
 
     @Test fun crc16KnownValue() {

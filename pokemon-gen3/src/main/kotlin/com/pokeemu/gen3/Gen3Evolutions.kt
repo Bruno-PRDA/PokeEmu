@@ -25,7 +25,7 @@ object Gen3Evolutions {
         fun target(t: Int, stride: Int, species: Int) = (t + stride * species + 4).takeIf { it + 2 <= rom.size }?.let(rom::u16)
         var t = referenced.nextSetBit(0)
         while (t >= 0) {
-            if (t % 4 == 0) for (stride in STRIDES) {
+            if (t % 2 == 0) for (stride in STRIDES) { // Unbound: 2-byte aligned
                 if (t + stride * speciesCount > rom.size) continue
                 if (ANCHORS.all { (from, to) -> target(t, stride, from) == to }) return t to stride
             }

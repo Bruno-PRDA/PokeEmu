@@ -93,7 +93,7 @@ class MainActivity : ComponentActivity() {
                         store = CheatStore(GameStorage(filesDir), id),
                         platform = rom.header.platform,
                         onBack = { cheatsFor = null },
-                        evolutionChanges = {
+                        evolutionChanges = if (!rom.header.pokemonTools) null else suspend {
                             val file = withContext(Dispatchers.IO) { library.localCopy(rom.uri).file }
                             EvolutionCheat.changes(this@MainActivity, file, id, rom.header.platform == com.pokeemu.saves.Platform.NDS).map { it.second }.distinct()
                         },
@@ -101,7 +101,7 @@ class MainActivity : ComponentActivity() {
                     return@PokeEmuTheme
                 }
                 if (globalPc) {
-                    GlobalPcScreen(roms, onBack = { globalPc = false })
+                    GlobalPcScreen(roms.filter { it.header.pokemonTools }, onBack = { globalPc = false })
                     return@PokeEmuTheme
                 }
                 managingSaves?.let { rom ->

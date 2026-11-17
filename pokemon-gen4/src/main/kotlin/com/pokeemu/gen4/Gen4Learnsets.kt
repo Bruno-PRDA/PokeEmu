@@ -187,8 +187,7 @@ internal object Gen4Learnsets {
 
     /** The 92 TMs then 8 HMs, found in the ARM9 code by the HM moves at the end. */
     private fun tmMoveList(rom: RomSource, moveCount: Int): List<Int>? {
-        val header = rom.read(0, 0x30)
-        val arm9 = rom.read(header.u32(0x20), header.u32(0x2C).toInt().coerceAtMost(8 shl 20))
+        val arm9 = Arm9.read(rom)
         for (hms in HM_LISTS) {
             val pattern = ByteArray(16).also { b -> hms.forEachIndexed { i, m -> b[2 * i] = m.toByte(); b[2 * i + 1] = (m shr 8).toByte() } }
             var at = 0

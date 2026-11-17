@@ -195,7 +195,8 @@ class RomScannerTest {
     /** Optional: POKEEMU_TEST_ROMS=<folder of .gba files> prints what the scanner finds in real ROMs. */
     @Test fun realRomsIfProvided() {
         val dir = System.getenv("POKEEMU_TEST_ROMS")?.let(::File) ?: return
-        for (f in dir.listFiles { x -> x.extension.equals("gba", true) }.orEmpty()) {
+        for (f in dir.listFiles { x -> x.extension.equals("gba", true) }.orEmpty().sortedBy { it.name }) {
+            if (f.length() < 0x100000) { println("== ${f.name}: only ${f.length()} bytes, skipped"); continue }
             val t = System.currentTimeMillis()
             val rom = f.readBytes()
             val data = RomScanner(rom).scan()
@@ -205,7 +206,7 @@ class RomScannerTest {
             for (sp in listOf(1, 6, 25, 150, 277, 384)) data.base(sp)?.let { b ->
                 println("   ${data.speciesName(sp)}: ${b.stats} ${RomData.typeName(b.type1)}/${RomData.typeName(b.type2)} ${data.abilityName(b.ability1)}/${data.abilityName(b.ability2)} gender=${b.genderRatio} growth=${GameRules.GROWTH_NAMES.getOrElse(b.growthRate) { "?" }}")
             }
-            println("   moves 85=${data.moveName(85)} pp=${data.basePp(85)}, 354=${data.moveName(354)}, last=${data.moveNames.last()}")
+            println("   moves 85=${data.moveName(85)} pp=${data.basePp(85)}, 354=${data.moveName(354)}, last=${data.moveNames.lastOrNull()}")
             Gen3Evolutions.locate(rom, Gen3Evolutions.referenced(rom), data.speciesNames.size.coerceAtLeast(412))?.let { (t, stride) ->
                 val code = String(rom, 0xAC, 3, Charsets.ISO_8859_1)
                 val fixes = Gen3Evolutions.tradeFixes(rom, t, stride, data.speciesNames.size, fixBeauty = code in setOf("BPR", "BPG"), itemName = data::itemName)
@@ -220,8 +221,41 @@ class RomScannerTest {
                         moves.entries.take(12).joinToString { (m, src) -> "${data.moveName(m)} [${src.label(data::speciesName)}]" })
                 }
             }
+            data.learnsets?.let { l ->
+                println("   TMs (${l.tmMoves.size}, ${l.hmCount} HMs): " + l.tmMoves.take(8).joinToString { data.moveName(it) } + " ... " + l.tmMoves.takeLast(3).joinToString { data.moveName(it) })
+            }
+            for (name in listOf("FLAMETHROWER", "EARTHQUAKE", "SHADOW BALL", "MOONBLAST")) {
+                val m = data.moveNames.indexOfFirst { it.equals(name, true) }.takeIf { it > 0 } ?: continue
+                println("   move $name #$m: ${data.moveInfo(m)}")
+            }
+            System.getenv("PROBE_OUT")?.let { outDir ->
+                val sprites = Gen3Sprites(data.sprites) { o, n -> if (o in rom.indices) rom.copyOfRange(o, minOf(rom.size, o + n)) else null }
+                val ids = listOf("BULBASAUR", "CHARIZARD", "PIKACHU", "MEWTWO", "TYPHLOSION", "TYRANITAR", "BLAZIKEN", "RAYQUAZA", "GARCHOMP", "LUCARIO", "ARCEUS", "GRENINJA", "SYLVEON", "DRAGAPULT").mapNotNull { n -> data.speciesNames.indexOfFirst { it.equals(n, true) }.takeIf { it > 0 } } + (data.speciesNames.size - 1)
+                val pics = ids.flatMap { listOf(runCatching { sprites.pokemon(it, false) }.getOrNull(), runCatching { sprites.pokemon(it, true) }.getOrNull()) } +
+                    (1..30).map { runCatching { sprites.item(it) }.getOrNull() } +
+                    data.itemNames.indices.filter { data.itemName(it).matches(Regex("(?i)TM0?1|HM0?1")) }.map { runCatching { sprites.item(it) }.getOrNull() }
+                println("   sprites: ${pics.count { it != null }}/${pics.size} pictures; species ${ids.map(data::speciesName)}")
+                probeSheet(java.io.File(outDir, f.nameWithoutExtension + ".png"), pics)
+            }
             assertTrue(data.speciesNames.size > 400, "${f.name}: species table found")
             assertTrue(data.baseStats.isNotEmpty(), "${f.name}: base stats found")
         }
     }
+}
+
+/** Test helper: draws pictures in a grid (gray = missing) into a PNG, for checking by eye. */
+internal fun probeSheet(out: java.io.File, pics: List<com.pokeemu.core.Picture?>) {
+    val cell = 100; val cols = 10; val rows = (pics.size + cols - 1) / cols
+    val img = java.awt.image.BufferedImage(cols * cell, rows * cell, java.awt.image.BufferedImage.TYPE_INT_ARGB)
+    for (i in pics.indices) {
+        val p = pics[i]; val x0 = i % cols * cell; val y0 = i / cols * cell
+        for (y in 0 until cell) for (x in 0 until cell) img.setRGB(x0 + x, y0 + y, if (p == null) 0xFF808080.toInt() else 0xFFF4F4F4.toInt())
+        if (p == null) continue
+        for (y in 0 until minOf(p.height, cell)) for (x in 0 until minOf(p.width, cell)) {
+            val c = p.argb[y * p.width + x]
+            if ((c ushr 24) != 0) img.setRGB(x0 + x, y0 + y, c)
+        }
+    }
+    out.parentFile.mkdirs()
+    javax.imageio.ImageIO.write(img, "png", out)
 }

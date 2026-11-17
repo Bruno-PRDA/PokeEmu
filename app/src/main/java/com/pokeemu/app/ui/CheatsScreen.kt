@@ -94,7 +94,8 @@ fun CheatsScreen(
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
             LazyColumn(contentPadding = PaddingValues(bottom = 96.dp)) {
-                item {
+                // Built-in cheats need a game the Pokemon tools understand (none for Black/White).
+                if (evolutionChanges != null) item {
                     SectionTitle("Built-in")
                     androidx.compose.material3.OutlinedCard(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
                         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -111,9 +112,11 @@ fun CheatsScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                             if (inGame) Text("Takes effect the next time you start the game.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
-                            if (evolve && evolutionChanges != null) TextButton(onClick = { showChanges = true }) { Text("Show what changes") }
+                            if (evolve) TextButton(onClick = { showChanges = true }) { Text("Show what changes") }
                         }
                     }
+                }
+                item {
                     SectionTitle("Your cheats")
                 }
                 if (cheats.isEmpty()) item {

@@ -94,7 +94,7 @@ class Gen4RomData(
     }
 
     companion object {
-        const val FORMAT_VERSION = 5
+        const val FORMAT_VERSION = 6
 
         fun read(input: InputStream): Gen4RomData? {
             val d = DataInputStream(input.buffered())
@@ -117,6 +117,7 @@ class Gen4RomData(
         /** Vanilla locations (HGSS, Platinum, Diamond/Pearl); hacks keep these paths. */
         private val TEXT_ARCHIVES = listOf("a/0/2/7", "msgdata/pl_msg.narc", "msgdata/msg.narc")
         private val PERSONAL_ARCHIVES = listOf("a/0/0/2", "poketool/personal/pl_personal.narc", "poketool/personal/personal.narc")
+        private const val NEW_MOVE_DATA = "extra/new_move_data.narc"
         private val MOVE_ARCHIVES = listOf("a/0/1/1", "poketool/waza/pl_waza_tbl.narc", "poketool/waza/waza_tbl.narc")
 
         private const val TYPE_GRASS = 12
@@ -158,8 +159,19 @@ class Gen4RomData(
             val base = personal?.let(::readBaseStats).orEmpty()
             report += if (base.isNotEmpty()) "Base stats for ${base.count { it != null }} species" else "Base stats not found — levels and stats can't be recalculated"
             val moveNarc = moveNarc(fs)
-            val pp = moveNarc?.let { n -> (0 until n.size).map { i -> n[i].let { if (it.size >= 7) it.u8(6) else 0 } } }.orEmpty()
-            val moveStats = moveNarc?.let { n -> (0 until n.size).map { i -> n[i].let { e -> if (e.size >= 7) IntArray(4) { e.u8(2 + it) } else IntArray(4) } } }.orEmpty()
+            var pp = moveNarc?.let { n -> (0 until n.size).map { i -> n[i].let { if (it.size >= 7) it.u8(6) else 0 } } }.orEmpty()
+            var moveStats = moveNarc?.let { n -> (0 until n.size).map { i -> n[i].let { e -> if (e.size >= 7) IntArray(4) { e.u8(2 + it) } else IntArray(4) } } }.orEmpty()
+            // hg-engine (Origins HeartGold) keeps every move, new ones included, in its own archive:
+            // type, ?, category (0 status, 1 physical, 2 special), power, accuracy, PP.
+            fs.read(NEW_MOVE_DATA)?.takeIf(Narc::isNarc)?.let(Narc::parse)?.takeIf { n ->
+                n.size > pp.size && n[1].let { p -> p.size >= 6 && p.u8(0) == 0 && p.u8(3) == 40 && p.u8(4) == 100 }
+            }?.let { n ->
+                val category = intArrayOf(2, 0, 1) // its numbering -> physical 0, special 1, status 2
+                pp = (0 until n.size).map { i -> n[i].let { if (it.size >= 6) it.u8(5) else 0 } }
+                moveStats = (0 until n.size).map { i ->
+                    n[i].let { e -> if (e.size >= 6) intArrayOf(category.getOrElse(e.u8(2)) { 2 }, e.u8(3), e.u8(0), e.u8(4)) else IntArray(4) }
+                }
+            }
             report += if (pp.isNotEmpty()) "PP for ${pp.size} moves" else "Move PP not found"
             val clefairy = species.indexOfFirst { it.equals("Clefairy", ignoreCase = true) }
             val fairy9 = clefairy > 0 && base.getOrNull(clefairy)?.type1 == 9

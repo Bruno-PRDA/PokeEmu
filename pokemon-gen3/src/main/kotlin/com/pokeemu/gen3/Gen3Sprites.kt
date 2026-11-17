@@ -13,6 +13,14 @@ data class SpriteTables(
     val shinyTagOffset: Int = 0,
     val itemIcons: Int = -1,
     val itemIconCount: Int = 0,
+    /**
+     * Non-zero for engines that keep each species' picture pointers in its species record
+     * (pokeemerald-expansion): the record size. The tables above are then species 0's fields.
+     */
+    val speciesStride: Int = 0,
+    /** Bytes per item icon entry, and where its palette pointer is after the picture pointer. */
+    val itemStride: Int = 8,
+    val itemPaletteDelta: Int = 4,
 ) {
     val hasPokemon get() = frontPics >= 0 && palettes >= 0
 }
@@ -25,6 +33,7 @@ class Gen3Sprites(private val tables: SpriteTables, private val read: (offset: I
 
     override fun pokemon(species: Int, shiny: Boolean): Picture? {
         if (!tables.hasPokemon || species <= 0) return null
+        if (tables.speciesStride > 0) return recordPicture(species, shiny)
         val pic = read(tables.frontPics + 8 * species, 8) ?: return null
         if (pic.u16(6) != species) return null // tag check: entry belongs to this species
         val pal = if (shiny && tables.shinyPalettes >= 0) {
@@ -40,11 +49,24 @@ class Gen3Sprites(private val tables: SpriteTables, private val read: (offset: I
         return Picture.fromTiles(tiles, Picture.palette(colours), 8, 8)
     }
 
+    /** Expansion engines: plain pointers in each species record, no tags. */
+    private fun recordPicture(species: Int, shiny: Boolean): Picture? {
+        val stride = tables.speciesStride
+        fun pointer(table: Int) = read(table + stride * species, 4)?.u32(0)
+        val pic = pointer(tables.frontPics) ?: return null
+        val pal = pointer(if (shiny && tables.shinyPalettes >= 0) tables.shinyPalettes else tables.palettes) ?: return null
+        val tiles = lz(pic, 0x800) ?: return null
+        val colours = lz(pal, 0x20) ?: return null
+        return Picture.fromTiles(tiles, Picture.palette(colours), 8, 8)
+    }
+
     override fun item(item: Int): Picture? {
         if (tables.itemIcons < 0 || item <= 0 || item >= tables.itemIconCount) return null
-        val e = read(tables.itemIcons + 8 * item, 8) ?: return null
-        val tiles = lz(e.u32(0), 0x120) ?: return null
-        val colours = lz(e.u32(4), 0x20) ?: return null
+        val at = tables.itemIcons + tables.itemStride * item
+        val pic = read(at, 4)?.u32(0) ?: return null
+        val pal = read(at + tables.itemPaletteDelta, 4)?.u32(0) ?: return null
+        val tiles = lz(pic, 0x120) ?: return null
+        val colours = lz(pal, 0x20) ?: return null
         return Picture.fromTiles(tiles, Picture.palette(colours), 3, 3)
     }
 

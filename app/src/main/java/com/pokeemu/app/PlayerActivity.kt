@@ -130,7 +130,7 @@ class PlayerActivity : ComponentActivity() {
                     onToggleFastForward = ::toggleFastForward,
                     onOpenMenu = { showDialog(Dialog.MENU) },
                     overlayOpen = overlayOpen,
-                    onToggleOverlay = ::toggleOverlay,
+                    onToggleOverlay = if (pokemonTools) ::toggleOverlay else null,
                     overlay = { mod -> OverlayPanel(liveState, romData, mod, sprites) },
                     aspect = if (isDs) dsLayout.aspect else 3f / 2f,
                     portraitPad = if (isDs) PadLayouts.dsPortrait else PadLayouts.portrait,
@@ -161,7 +161,7 @@ class PlayerActivity : ComponentActivity() {
                         onCheats = { showDialog(Dialog.CHEATS) },
                         onEditControls = { showDialog(Dialog.EDIT_CONTROLS) },
                         onSetCover = ::useScreenAsCover,
-                        onChallenges = { showDialog(Dialog.CHALLENGES) },
+                        onChallenges = if (pokemonTools) ({ showDialog(Dialog.CHALLENGES) }) else null,
                         dsLayout = if (isDs) dsLayout else null,
                         onDsLayout = { l ->
                             dsLayout = l
@@ -193,7 +193,7 @@ class PlayerActivity : ComponentActivity() {
                                     onBack = { showDialog(Dialog.MENU) },
                                     onChanged = ::applyCheats,
                                     inGame = true,
-                                    evolutionChanges = romFile?.let { file ->
+                                    evolutionChanges = romFile?.takeIf { pokemonTools }?.let { file ->
                                         { EvolutionCheat.changes(this@PlayerActivity, file, id, isDs).map { it.second }.distinct() }
                                     },
                                 )
@@ -234,7 +234,9 @@ class PlayerActivity : ComponentActivity() {
             val header = withContext(Dispatchers.IO) {
                 local.file.inputStream().use { input -> ByteArray(NdsHeader.HEADER_SIZE).also { input.read(it) } }
             }
-            isDs = NdsHeader.parse(header) != null
+            val ndsHeader = NdsHeader.parse(header)
+            isDs = ndsHeader != null
+            pokemonTools = ndsHeader?.pokemonTools ?: true
             portraitCustom = padStore.get(PadCustomStore.key(isDs, landscape = false))
             landscapeCustom = padStore.get(PadCustomStore.key(isDs, landscape = true))
             if (isDs) {
@@ -246,7 +248,7 @@ class PlayerActivity : ComponentActivity() {
             withContext(Dispatchers.IO) { runCatching { SaveManager(storage, id).dailyBackupIfDue() } }
             romFile = local.file
             // Built-in cheat: evolution data changed in memory only (the ROM file is untouched).
-            val romPatches = if (CheatStore(storage, id).evolveWithoutTrading) {
+            val romPatches = if (pokemonTools && CheatStore(storage, id).evolveWithoutTrading) {
                 runCatching { EvolutionCheat.changes(this@PlayerActivity, local.file, id, isDs).map { (fix, _) -> fix.offset to fix.replacement } }
                     .getOrDefault(emptyList())
             } else emptyList()
@@ -267,11 +269,12 @@ class PlayerActivity : ComponentActivity() {
                     if (seen != null) ", visible to the game: ${seen.contentEquals(bytes)}" else "")
             }
             applyCheats() // before the first frame
-            startChallenges(id)
+            if (pokemonTools) startChallenges(id)
             session!!.start()
             ready = true
             if (storage.readState(id, GameStorage.AUTO_SLOT) != null) showDialog(Dialog.RESUME_PROMPT)
-            if (isDs) prepareDsOverlay(id, local.file)
+            if (!pokemonTools) Unit
+            else if (isDs) prepareDsOverlay(id, local.file)
             else prepareOverlay(id, withContext(Dispatchers.IO) { local.file.readBytes() }) // GBA: <= 32 MB
         } catch (e: Exception) {
             error = "Could not start the game:\n${e.message}"
@@ -335,6 +338,9 @@ class PlayerActivity : ComponentActivity() {
     }
 
     private var challengeRunner: ChallengeRunner? = null
+
+    /** False for DS games the Pokemon tools don't understand (Black, White...): they only play. */
+    private var pokemonTools by mutableStateOf(true)
 
     /**
      * Challenge modes (shiny odds, Nuzlocke) watch the game's memory a few

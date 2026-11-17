@@ -66,13 +66,13 @@ data class RomData(
         d.writeBoolean(learnsets != null)
         learnsets?.write(d)
         for (list in listOf(movePower, moveType, moveAccuracy, moveCategory)) { d.writeInt(list.size); list.forEach(d::writeShort) }
-        with(sprites) { listOf(frontPics, palettes, shinyPalettes, shinyTagOffset, itemIcons, itemIconCount).forEach(d::writeInt) }
+        with(sprites) { listOf(frontPics, palettes, shinyPalettes, shinyTagOffset, itemIcons, itemIconCount, speciesStride, itemStride, itemPaletteDelta).forEach(d::writeInt) }
         d.flush()
     }
 
     companion object {
         /** Bump when the scanner changes so cached results are rebuilt. */
-        const val FORMAT_VERSION = 5
+        const val FORMAT_VERSION = 6
 
         val TYPE_NAMES = listOf(
             "Normal", "Fighting", "Flying", "Poison", "Ground", "Rock", "Bug", "Ghost", "Steel", "???",
@@ -97,8 +97,8 @@ data class RomData(
             val pp = List(d.readInt()) { d.readShort().toInt() }
             val learnsets = if (d.readBoolean()) Learnsets.read(d) else null
             val moveLists = List(4) { List(d.readInt()) { d.readShort().toInt() } }
-            val t = List(6) { d.readInt() }
-            val sprites = SpriteTables(t[0], t[1], t[2], t[3], t[4], t[5])
+            val t = List(9) { d.readInt() }
+            val sprites = SpriteTables(t[0], t[1], t[2], t[3], t[4], t[5], t[6], t[7], t[8])
             return RomData(species, moves, abilities, items, base, pp, report, learnsets,
                 moveLists[0], moveLists[1], moveLists[2], moveLists[3], sprites)
         }

@@ -159,8 +159,12 @@ class Gen4Test {
     /** Optional: POKEEMU_TEST_ROMS4=<folder of .nds> prints names read from real DS ROMs. */
     @Test fun realRomsIfProvided() {
         val dir = System.getenv("POKEEMU_TEST_ROMS4")?.let(::File) ?: return
-        for (f in dir.listFiles { x -> x.extension.equals("nds", true) }.orEmpty()) {
+        for (f in dir.listFiles { x -> x.extension.equals("nds", true) }.orEmpty().sortedBy { it.name }) {
+            val code = FileRomSource(f).use { String(it.read(0x0C, 4), Charsets.ISO_8859_1) }
+            if (code.startsWith("IR")) { println("${f.name}: $code is Gen 5, skipped"); continue }
+            val t0 = System.currentTimeMillis()
             val data = FileRomSource(f).use { Gen4RomData.scan(it) }
+            println("== ${f.name} [$code] scanned in ${System.currentTimeMillis() - t0} ms")
             println("${f.name}: ${data.speciesNames.size} species, ${data.moveNames.size} moves")
             println("   species 1..6: ${(1..6).map(data::species)}  last: ${data.speciesNames.takeLast(4)}")
             println("   moves 1..4: ${(1..4).map(data::move)}  last: ${data.moveNames.takeLast(3)}")
@@ -196,6 +200,22 @@ class Gen4Test {
                 println("   files: ${fs.paths.size}, dirs a/0/1/*: ${fs.paths.keys.filter { it.startsWith("a/0/1/") }.sorted()}")
             }
             println("   items 1..4: ${(1..4).map(data::itemName)}; pp Pound=${data.basePp(1)} Tackle=${data.basePp(33)}; personal entries=${data.baseStats.size}")
+            data.learnsets?.let { l ->
+                println("   TMs (${l.tmMoves.size}, ${l.hmCount} HMs, teachable=${l.tutorIncludesTms}): " + l.tmMoves.take(8).joinToString { data.move(it) } + " ... " + l.tmMoves.takeLast(3).joinToString { data.move(it) })
+            }
+            for (name in listOf("Flamethrower", "Earthquake", "Shadow Ball", "Moonblast")) {
+                val m = data.moveNames.indexOfFirst { it.equals(name, true) }.takeIf { it > 0 } ?: continue
+                println("   move $name #$m: ${data.moveInfo(m)}")
+            }
+            System.getenv("PROBE_OUT")?.let { outDir ->
+                val sprites = Gen4Sprites.open(FileRomSource(f))
+                val ids = listOf("BULBASAUR", "CHARIZARD", "PIKACHU", "MEWTWO", "TYPHLOSION", "TYRANITAR", "BLAZIKEN", "RAYQUAZA", "GARCHOMP", "LUCARIO", "ARCEUS", "GRENINJA", "SYLVEON", "DRAGAPULT").mapNotNull { n -> data.speciesNames.indexOfFirst { it.equals(n, true) }.takeIf { it > 0 } } + (data.speciesNames.size - 1)
+                val pics = ids.flatMap { listOf(runCatching { sprites.pokemon(it, false) }.getOrNull(), runCatching { sprites.pokemon(it, true) }.getOrNull()) } +
+                    (1..30).map { runCatching { sprites.item(it) }.getOrNull() } +
+                    data.itemNames.indices.filter { data.itemName(it).matches(Regex("(?i)TM0?1|HM0?1")) }.map { runCatching { sprites.item(it) }.getOrNull() }
+                println("   sprites: ${pics.count { it != null }}/${pics.size} pictures; species ${ids.map(data::species)}")
+                probeSheet(File(outDir, f.nameWithoutExtension + ".png"), pics)
+            }
         }
     }
 
@@ -212,4 +232,21 @@ class Gen4Test {
             }
         }
     }
+}
+
+/** Test helper: draws pictures in a grid (gray = missing) into a PNG, for checking by eye. */
+internal fun probeSheet(out: java.io.File, pics: List<com.pokeemu.core.Picture?>) {
+    val cell = 100; val cols = 10; val rows = (pics.size + cols - 1) / cols
+    val img = java.awt.image.BufferedImage(cols * cell, rows * cell, java.awt.image.BufferedImage.TYPE_INT_ARGB)
+    for (i in pics.indices) {
+        val p = pics[i]; val x0 = i % cols * cell; val y0 = i / cols * cell
+        for (y in 0 until cell) for (x in 0 until cell) img.setRGB(x0 + x, y0 + y, if (p == null) 0xFF808080.toInt() else 0xFFF4F4F4.toInt())
+        if (p == null) continue
+        for (y in 0 until minOf(p.height, cell)) for (x in 0 until minOf(p.width, cell)) {
+            val c = p.argb[y * p.width + x]
+            if ((c ushr 24) != 0) img.setRGB(x0 + x, y0 + y, c)
+        }
+    }
+    out.parentFile.mkdirs()
+    javax.imageio.ImageIO.write(img, "png", out)
 }
