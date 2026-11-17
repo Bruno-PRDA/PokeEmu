@@ -202,10 +202,17 @@ private fun SummaryTab(pk: Mon, editor: MonEditor, rom: GameData, edit: (() -> U
 @Composable
 private fun MovesTab(pk: Mon, editor: MonEditor, rom: GameData, edit: (() -> Unit) -> Unit) {
     var picking by remember { mutableStateOf<Int?>(null) }
+    val learnable = remember(rom, pk.species) { rom.learnsets?.learnable(pk.species).orEmpty() }
     for (i in 0 until 4) {
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 LabeledButton("Move ${i + 1}", rom.moveName(pk.move(i))) { picking = i }
+                if (pk.move(i) != 0 && learnable.isNotEmpty() && pk.move(i) !in learnable) {
+                    Text(
+                        "${rom.speciesName(pk.species)} can't normally learn this in this game",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error,
+                    )
+                }
                 if (pk.move(i) != 0) {
                     val ups = pk.ppUps(i)
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -220,7 +227,11 @@ private fun MovesTab(pk: Mon, editor: MonEditor, rom: GameData, edit: (() -> Uni
         }
     }
     picking?.let { i ->
-        IdPicker("Move ${i + 1}", rom.moveNames, allowZero = true, onPick = { id -> picking = null; edit { editor.setMove(pk, i, id) } }, onDismiss = { picking = null })
+        MovePicker(
+            "Move ${i + 1}", rom, pk.species, known = pk.moves,
+            onPick = { id -> picking = null; edit { editor.setMove(pk, i, id) } },
+            onDismiss = { picking = null },
+        )
     }
 }
 

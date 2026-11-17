@@ -1,5 +1,7 @@
 package com.pokeemu.gen4
 
+import com.pokeemu.core.label
+
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -167,6 +169,15 @@ class Gen4Test {
             println("   494..500: ${(494..500).map(data::species)} 650..652: ${(650..652).map(data::species)} 900..912: ${(900..912).map(data::species)}")
             assertEquals("bulbasaur", data.species(1).lowercase())
             data.report.forEach { println("   report: $it") }
+            data.learnsets?.let { l ->
+                println("   learnsets: ${l.has}")
+                for (name in listOf("Charizard", "Pikachu", "Weavile", "Typhlosion")) {
+                    val s = data.speciesNames.indexOfFirst { it.equals(name, true) }.takeIf { it > 0 } ?: continue
+                    val moves = l.learnable(s)
+                    println("   $name (#$s): ${moves.size} moves, line ${l.lineage(s).map(data::species)}; " +
+                        moves.entries.take(14).joinToString { (m, src) -> "${data.move(m)} [${src.label(data::species)}]" })
+                }
+            }
             for (name in listOf("Charmander", "Clefairy", "Shedinja", "Sylveon", "Eternatus")) {
                 val id = data.speciesNames.indexOfFirst { it.equals(name, true) }
                 val b = data.base(id)

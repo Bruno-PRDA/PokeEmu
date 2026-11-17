@@ -1,5 +1,7 @@
 package com.pokeemu.gen3
 
+import com.pokeemu.core.Learnsets
+
 import com.pokeemu.core.BaseStats
 import com.pokeemu.core.GameData
 import com.pokeemu.core.GameRules
@@ -25,6 +27,7 @@ data class RomData(
     val movePp: List<Int>,
     /** Human-readable notes on what was found, for the "ROM data" info panel. */
     override val report: List<String>,
+    override val learnsets: Learnsets? = null,
 ) : GameData {
     override fun base(species: Int): BaseStats? = baseStats.getOrNull(species)
     override fun basePp(move: Int): Int? = movePp.getOrNull(move)?.takeIf { it > 0 }
@@ -44,12 +47,14 @@ data class RomData(
             }
         }
         d.writeInt(movePp.size); movePp.forEach(d::writeShort)
+        d.writeBoolean(learnsets != null)
+        learnsets?.write(d)
         d.flush()
     }
 
     companion object {
         /** Bump when the scanner changes so cached results are rebuilt. */
-        const val FORMAT_VERSION = 2
+        const val FORMAT_VERSION = 3
 
         val TYPE_NAMES = listOf(
             "Normal", "Fighting", "Flying", "Poison", "Ground", "Rock", "Bug", "Ghost", "Steel", "???",
@@ -72,7 +77,8 @@ data class RomData(
                 }
             }
             val pp = List(d.readInt()) { d.readShort().toInt() }
-            return RomData(species, moves, abilities, items, base, pp, report)
+            val learnsets = if (d.readBoolean()) Learnsets.read(d) else null
+            return RomData(species, moves, abilities, items, base, pp, report, learnsets)
         }
     }
 }

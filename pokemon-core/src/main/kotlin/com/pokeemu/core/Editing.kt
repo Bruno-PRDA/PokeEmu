@@ -19,6 +19,8 @@ interface GameData {
     val report: List<String>
     fun base(species: Int): BaseStats?
     fun basePp(move: Int): Int?
+    /** Which moves each species can learn; null when the ROM's tables weren't found. */
+    val learnsets: Learnsets? get() = null
 
     fun speciesName(id: Int) = speciesNames.getOrNull(id)?.takeIf { it.isNotBlank() } ?: "#$id"
     fun moveName(id: Int) = if (id == 0) "—" else moveNames.getOrNull(id)?.takeIf { it.isNotBlank() } ?: "Move #$id"

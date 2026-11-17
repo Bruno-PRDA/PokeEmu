@@ -18,6 +18,24 @@ class RomScanner(private val rom: ByteArray) {
 
     private val report = mutableListOf<String>()
 
+    /**
+     * Offsets some 4-byte ROM pointer points to. Hacks often move a table and
+     * leave the old copy behind; the copy in use is the one the code points to.
+     */
+    private val referenced: java.util.BitSet by lazy {
+        val set = java.util.BitSet(rom.size)
+        var i = 0
+        while (i + 4 <= rom.size) {
+            val b3 = rom[i + 3].toInt() and 0xFF
+            if (b3 == 0x08 || b3 == 0x09) {
+                val target = rom.u32(i) - 0x08000000L
+                if (target in 0 until rom.size) set.set(target.toInt())
+            }
+            i += 4
+        }
+        set
+    }
+
     fun scan(): RomData {
         val tables = listOf(
             names("species names", listOf("BULBASAUR", "IVYSAUR", "VENUSAUR"), firstIndex = 1, maxLen = 12, max = 2048),
@@ -30,7 +48,13 @@ class RomScanner(private val rom: ByteArray) {
         val (species, moves, abilities, items) = tables.map { it.names }
         val base = baseStats(species.size.coerceAtLeast(412))
         val pp = movePp(moves.size.coerceAtLeast(355))
-        return RomData(species, moves, abilities, items, base, pp, report.toList())
+        val learnsets = LearnsetScanner(
+            rom, referenced,
+            speciesCount = species.size.takeIf { it > 0 } ?: 412,
+            moveCount = moves.size.takeIf { it > 0 } ?: 355,
+            itemNames = items,
+        ).scan(report).takeIf { it.has.isNotEmpty() }
+        return RomData(species, moves, abilities, items, base, pp, report.toList(), learnsets)
     }
 
     private class NameTable(val what: String, val table: Table?, val names: List<String>) {
@@ -63,15 +87,14 @@ class RomScanner(private val rom: ByteArray) {
         altAnchors: List<String>? = null,
     ): NameTable {
         val variants = listOfNotNull(anchors, altAnchors).flatMap { listOf(it, it.map(::titleCase)) }.distinct()
-        for (v in variants) {
-            val table = findInline(v, firstIndex) ?: findPointers(v, firstIndex) ?: continue
-            val names = readNames(table, maxLen, max)
-            if (names.size > firstIndex + 2) {
-                foundTables += table
-                return NameTable(what, table, names)
-            }
-        }
-        return NameTable(what, null, emptyList())
+        val candidates = variants.flatMap { v -> findInline(v, firstIndex) + findPointers(v, firstIndex) }.distinct()
+            .map { it to readNames(it, maxLen, max) }
+            .filter { (_, names) -> names.size > firstIndex + 2 }
+        // The table the game uses is the one its code points to; otherwise the biggest.
+        val (table, names) = candidates.maxWithOrNull(compareBy({ referenced[it.first.base] }, { it.second.size }))
+            ?: return NameTable(what, null, emptyList())
+        foundTables += table
+        return NameTable(what, table, names)
     }
 
     private fun titleCase(s: String) = s.lowercase().split(' ').joinToString(" ") { w -> w.replaceFirstChar { it.uppercase() } }
@@ -79,22 +102,25 @@ class RomScanner(private val rom: ByteArray) {
     /** Encoded string plus its terminator. */
     private fun enc(s: String): ByteArray = Gen3Text.encode(s, s.length + 1)
 
-    private fun findInline(anchors: List<String>, firstIndex: Int): Table? {
+    private fun findInline(anchors: List<String>, firstIndex: Int): List<Table> {
         val a = anchors.map(::enc)
+        val out = mutableListOf<Table>()
         for (p0 in occurrences(a[0])) {
             for (stride in a[0].size..MAX_STRIDE) {
                 if (matches(a[1], p0 + stride) && matches(a[2], p0 + 2 * stride)) {
                     val base = p0 - firstIndex * stride
-                    if (base >= 0) return Table(base, stride, pointers = false, firstIndex)
+                    if (base >= 0) out += Table(base, stride, pointers = false, firstIndex)
+                    break
                 }
             }
         }
-        return null
+        return out
     }
 
-    private fun findPointers(anchors: List<String>, firstIndex: Int): Table? {
+    private fun findPointers(anchors: List<String>, firstIndex: Int): List<Table> {
         val strings = anchors.map { s -> occurrences(enc(s)) }
-        if (strings.any { it.isEmpty() }) return null
+        if (strings.any { it.isEmpty() }) return emptyList()
+        val out = mutableListOf<Table>()
         val targets1 = strings[1].map { ptr(it) }.toSet()
         val targets2 = strings[2].map { ptr(it) }.toSet()
         for (s0 in strings[0]) {
@@ -106,12 +132,13 @@ class RomScanner(private val rom: ByteArray) {
                     if (q2 + 4 > rom.size) break
                     if (rom.u32(q1) in targets1 && rom.u32(q2) in targets2) {
                         val base = q0 - firstIndex * stride
-                        if (base >= 0) return Table(base, stride, pointers = true, firstIndex)
+                        if (base >= 0) out += Table(base, stride, pointers = true, firstIndex)
+                        break
                     }
                 }
             }
         }
-        return null
+        return out
     }
 
     private fun readNames(t: Table, maxLen: Int, max: Int): List<String> {
@@ -176,6 +203,7 @@ class RomScanner(private val rom: ByteArray) {
     private fun baseStats(count: Int): List<BaseStats?> {
         val (b1, b2, b3) = facts.take(3).map { f -> ByteArray(6) { f.stats[it].toByte() } }
         val others = facts.drop(3)
+        val candidates = mutableListOf<Pair<Int, Int>>()
         for (p in occurrences(b1)) {
             for (stride in 16..MAX_STRIDE) {
                 if (!matches(b2, p + stride) || !matches(b3, p + 2 * stride)) continue
@@ -183,8 +211,13 @@ class RomScanner(private val rom: ByteArray) {
                 // Most of the other reference species must match too (rules out coincidences).
                 val agreeing = others.count { f -> f.stats.indices.all { rom.u8(base + f.species * stride + it) == f.stats[it] } }
                 if (agreeing * 2 < others.size) continue
-                return readBaseStats(base, stride, count)
+                candidates += base to stride
+                break
             }
+        }
+        // The table the code points to is the one in use (hacks leave the old one behind).
+        (candidates.firstOrNull { referenced[it.first] } ?: candidates.firstOrNull())?.let { (base, stride) ->
+            return readBaseStats(base, stride, count)
         }
         report += "Could not find base stats — level/stat recalculation is disabled"
         return emptyList()
@@ -247,14 +280,18 @@ class RomScanner(private val rom: ByteArray) {
         val p1 = byteArrayOf(40, 0, 100, 35)
         val p2 = byteArrayOf(50, 1, 100, 25)
         val p3 = byteArrayOf(15, 0, 85, 10)
+        val candidates = mutableListOf<Pair<Int, Int>>()
         for (p in occurrences(p1)) {
             for (stride in 8..MAX_STRIDE) {
                 if (matches(p2, p + stride) && matches(p3, p + 2 * stride)) {
-                    val ppAt = p - stride + 3 // move 1 is Pound
-                    report += "Found move data: entry size $stride"
-                    return List(count) { m -> rom.getOrNull(ppAt + m * stride)?.toInt()?.and(0xFF) ?: 0 }
+                    candidates += (p - stride) to stride // move 1 is Pound
+                    break
                 }
             }
+        }
+        (candidates.firstOrNull { referenced[it.first] } ?: candidates.firstOrNull())?.let { (base, stride) ->
+            report += "Found move data: entry size $stride"
+            return List(count) { m -> rom.getOrNull(base + 3 + m * stride)?.toInt()?.and(0xFF) ?: 0 }
         }
         report += "Could not find move PP — new moves get 5 PP"
         return emptyList()

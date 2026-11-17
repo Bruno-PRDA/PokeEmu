@@ -2,6 +2,7 @@ package com.pokeemu.gen4
 
 import com.pokeemu.core.BaseStats
 import com.pokeemu.core.GameData
+import com.pokeemu.core.Learnsets
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.InputStream
@@ -49,6 +50,7 @@ class Gen4RomData(
     /** Hacks that add the Fairy type often reuse slot 9 (the unused "???" type). */
     val fairyIsType9: Boolean = false,
     override val report: List<String> = emptyList(),
+    override val learnsets: Learnsets? = null,
 ) : GameData {
     fun species(id: Int): String = speciesName(id)
     fun move(id: Int): String = moveName(id)
@@ -73,11 +75,13 @@ class Gen4RomData(
         }
         d.writeInt(movePp.size); movePp.forEach(d::writeShort)
         d.writeBoolean(fairyIsType9)
+        d.writeBoolean(learnsets != null)
+        learnsets?.write(d)
         d.flush()
     }
 
     companion object {
-        const val FORMAT_VERSION = 2
+        const val FORMAT_VERSION = 3
 
         fun read(input: InputStream): Gen4RomData? {
             val d = DataInputStream(input.buffered())
@@ -91,7 +95,9 @@ class Gen4RomData(
                 }
             }
             val pp = List(d.readInt()) { d.readShort().toInt() }
-            return Gen4RomData(lists[0], lists[1], lists[2], lists[3], base, pp, d.readBoolean(), lists[4])
+            val fairy = d.readBoolean()
+            val learnsets = if (d.readBoolean()) Learnsets.read(d) else null
+            return Gen4RomData(lists[0], lists[1], lists[2], lists[3], base, pp, fairy, lists[4], learnsets)
         }
 
         /** Vanilla locations (HGSS, Platinum, Diamond/Pearl); hacks keep these paths. */
@@ -134,25 +140,36 @@ class Gen4RomData(
             species ?: throw NdsFormatException("Couldn't find Pokémon names in this ROM")
             report += "${species.size} species names, ${moves?.size ?: 0} moves, ${items?.size ?: 0} items, ${abilities?.size ?: 0} abilities"
 
-            val base = readBaseStats(fs)
+            val personal = personalNarc(fs)
+            val base = personal?.let(::readBaseStats).orEmpty()
             report += if (base.isNotEmpty()) "Base stats for ${base.count { it != null }} species" else "Base stats not found — levels and stats can't be recalculated"
             val pp = readMovePp(fs)
             report += if (pp.isNotEmpty()) "PP for ${pp.size} moves" else "Move PP not found"
             val clefairy = species.indexOfFirst { it.equals("Clefairy", ignoreCase = true) }
             val fairy9 = clefairy > 0 && base.getOrNull(clefairy)?.type1 == 9
             if (fairy9) report += "Type 9 is Fairy in this ROM"
+            val learnsets = runCatching {
+                Gen4Learnsets.scan(fs, rom, personal, species.size, moves?.size?.takeIf { it > 0 } ?: 1024, report)
+            }.getOrNull()
 
-            return Gen4RomData(species, moves.orEmpty(), abilities.orEmpty(), items.orEmpty(), base, pp, fairy9, report)
+            return Gen4RomData(species, moves.orEmpty(), abilities.orEmpty(), items.orEmpty(), base, pp, fairy9, report, learnsets)
         }
 
         /** Personal data: 44 bytes per species (or form). Validated against Bulbasaur. */
-        private fun readBaseStats(fs: NdsFileSystem): List<BaseStats?> {
+        private fun personalNarc(fs: NdsFileSystem): Narc? {
             for (path in PERSONAL_ARCHIVES) {
                 val narc = fs.read(path)?.takeIf(Narc::isNarc)?.let(Narc::parse) ?: continue
                 if (narc.size < 2) continue
                 val bulba = narc[1]
                 if (bulba.size < 0x1A || (0 until 6).map(bulba::u8) != listOf(45, 49, 49, 45, 65, 65)) continue
                 if (bulba.u8(6) != TYPE_GRASS || bulba.u8(7) != TYPE_POISON) continue
+                return narc
+            }
+            return null
+        }
+
+        private fun readBaseStats(narc: Narc): List<BaseStats?> {
+            run {
                 return (0 until narc.size).map { i ->
                     val e = narc[i]
                     if (e.size < 0x1A) null else BaseStats(
@@ -163,7 +180,6 @@ class Gen4RomData(
                     )
                 }
             }
-            return emptyList()
         }
 
         /** Move data: power at 3, type at 4, accuracy at 5, PP at 6. Validated against Pound (40 power, Normal, 100%; hacks change its PP). */

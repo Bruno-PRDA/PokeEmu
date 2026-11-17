@@ -2,6 +2,7 @@ package com.pokeemu.gen3
 
 import com.pokeemu.core.BaseStats
 import com.pokeemu.core.GameRules
+import com.pokeemu.core.label
 import com.pokeemu.core.Gender
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -204,6 +205,15 @@ class RomScannerTest {
                 println("   ${data.speciesName(sp)}: ${b.stats} ${RomData.typeName(b.type1)}/${RomData.typeName(b.type2)} ${data.abilityName(b.ability1)}/${data.abilityName(b.ability2)} gender=${b.genderRatio} growth=${GameRules.GROWTH_NAMES.getOrElse(b.growthRate) { "?" }}")
             }
             println("   moves 85=${data.moveName(85)} pp=${data.basePp(85)}, 354=${data.moveName(354)}, last=${data.moveNames.last()}")
+            data.learnsets?.let { l ->
+                println("   learnsets: ${l.has}")
+                for (name in listOf("CHARIZARD", "PIKACHU", "WEAVILE")) {
+                    val s = data.speciesNames.indexOfFirst { it.equals(name, ignoreCase = true) }.takeIf { it > 0 } ?: continue
+                    val moves = l.learnable(s)
+                    println("   $name (#$s): ${moves.size} moves, line ${l.lineage(s).map(data::speciesName)}; " +
+                        moves.entries.take(12).joinToString { (m, src) -> "${data.moveName(m)} [${src.label(data::speciesName)}]" })
+                }
+            }
             assertTrue(data.speciesNames.size > 400, "${f.name}: species table found")
             assertTrue(data.baseStats.isNotEmpty(), "${f.name}: base stats found")
         }
