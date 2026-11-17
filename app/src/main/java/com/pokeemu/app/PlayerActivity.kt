@@ -48,6 +48,8 @@ import com.pokeemu.gen4.Gen4LiveReader
 import com.pokeemu.gen4.Gen4Save
 import com.pokeemu.gen3.RomData
 import com.pokeemu.app.ui.DsLayout
+import com.pokeemu.app.ui.PadCustomStore
+import com.pokeemu.app.ui.PadCustom
 import com.pokeemu.app.ui.OverlayPanel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -59,7 +61,7 @@ import java.io.File
 
 class PlayerActivity : ComponentActivity() {
 
-    private enum class Dialog { NONE, MENU, SAVE_STATE, LOAD_STATE, RESUME_PROMPT, CHEATS }
+    private enum class Dialog { NONE, MENU, SAVE_STATE, LOAD_STATE, RESUME_PROMPT, CHEATS, EDIT_CONTROLS }
 
     private val storage by lazy { GameStorage(filesDir) }
     private var session: EmulatorSession? = null
@@ -72,6 +74,10 @@ class PlayerActivity : ComponentActivity() {
     private var ffSpeed by mutableStateOf(3)
     private val prefs by lazy { getSharedPreferences("player", MODE_PRIVATE) }
     private var dsLayout by mutableStateOf(DsLayout.TOP_BOTTOM)
+    private val padStore by lazy { PadCustomStore(this) }
+    /** The user's control layouts for this system (GBA or DS), loaded once the game type is known. */
+    private var portraitCustom by mutableStateOf(PadCustom())
+    private var landscapeCustom by mutableStateOf(PadCustom())
     private var stateSlots by mutableStateOf<List<GameStorage.StateSlot>>(emptyList())
 
     // Battle overlay
@@ -120,6 +126,14 @@ class PlayerActivity : ComponentActivity() {
                     portraitPad = if (isDs) PadLayouts.dsPortrait else PadLayouts.portrait,
                     landscapePad = if (isDs) PadLayouts.dsLandscape else PadLayouts.landscape,
                     onTouch = if (isDs) { x, y, down -> session?.setTouch(x, y, down) } else null,
+                    portraitCustom = portraitCustom,
+                    landscapeCustom = landscapeCustom,
+                    editing = dialog == Dialog.EDIT_CONTROLS,
+                    onCustom = { landscape, custom ->
+                        if (landscape) landscapeCustom = custom else portraitCustom = custom
+                        padStore.set(PadCustomStore.key(isDs, landscape), custom)
+                    },
+                    onEditDone = { showDialog(Dialog.NONE) },
                 )
                 when (dialog) {
                     Dialog.MENU -> PauseMenu(
@@ -131,6 +145,7 @@ class PlayerActivity : ComponentActivity() {
                         onQuit = { finish() },
                         onDismiss = { showDialog(Dialog.NONE) },
                         onCheats = { showDialog(Dialog.CHEATS) },
+                        onEditControls = { showDialog(Dialog.EDIT_CONTROLS) },
                         dsLayout = if (isDs) dsLayout else null,
                         onDsLayout = { l ->
                             dsLayout = l
@@ -165,7 +180,7 @@ class PlayerActivity : ComponentActivity() {
                             }
                         }
                     }
-                    Dialog.NONE -> Unit
+                    Dialog.NONE, Dialog.EDIT_CONTROLS -> Unit
                 }
             }
         }
@@ -183,6 +198,8 @@ class PlayerActivity : ComponentActivity() {
                 local.file.inputStream().use { input -> ByteArray(NdsHeader.HEADER_SIZE).also { input.read(it) } }
             }
             isDs = NdsHeader.parse(header) != null
+            portraitCustom = padStore.get(PadCustomStore.key(isDs, landscape = false))
+            landscapeCustom = padStore.get(PadCustomStore.key(isDs, landscape = true))
             if (isDs) {
                 dsLayout = DsLayout.fromName(prefs.getString(PREF_DS_LAYOUT, null))
                 dsLayout.apply() // before load, so the first frame already uses it

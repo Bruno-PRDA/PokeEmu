@@ -12,6 +12,15 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.getValue
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.material3.Slider
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.border
 import androidx.compose.ui.unit.Dp
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -122,6 +131,13 @@ fun PlayerScreen(
     portraitPad: PadLayout = PadLayouts.portrait,
     landscapePad: PadLayout = PadLayouts.landscape,
     onTouch: ((Float, Float, Boolean) -> Unit)? = null,
+    /** The user's control layouts (see [PadCustom]). */
+    portraitCustom: PadCustom = PadCustom(),
+    landscapeCustom: PadCustom = PadCustom(),
+    /** Layout editing: controls and the screen are dragged; the game is paused meanwhile. */
+    editing: Boolean = false,
+    onCustom: (landscape: Boolean, PadCustom) -> Unit = { _, _ -> },
+    onEditDone: () -> Unit = {},
 ) {
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val toolButtons = @Composable {
@@ -136,14 +152,27 @@ fun PlayerScreen(
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         if (landscape) {
+            val custom = landscapeCustom
             // The game view stays in the middle strip between the buttons: a SurfaceView is drawn
             // above other views, so anything overlapping it would hide the controls.
-            Gamepad(landscapePad, opacity = 0.8f, onButtons = onButtons)
-            GameSurface(onSurface, aspect, Modifier.align(Alignment.Center).fillMaxHeight().fillMaxWidth(0.56f), onTouch = onTouch)
-            Row(Modifier.align(Alignment.TopCenter)) { toolButtons() }
-            if (overlayOpen) overlay(Modifier.align(Alignment.TopCenter).padding(top = 48.dp).width(360.dp).heightIn(max = 280.dp))
-        } else {
+            Gamepad(
+                custom.applyTo(landscapePad), opacity = 0.8f, onButtons = onButtons,
+                editing = editing, onMove = { id, x, y -> onCustom(true, custom.moved(id, x, y)) },
+            )
+            val area = Modifier.align(Alignment.Center).fillMaxHeight().fillMaxWidth(0.56f)
+            if (editing) ScreenPlaceholder(aspect, area, draggable = false)
+            else GameSurface(onSurface, aspect, area, onTouch = onTouch)
+            Row(Modifier.align(Alignment.TopCenter)) {
+                if (editing) EditBar(custom.scale, { onCustom(true, custom.copy(scale = it)) }, { onCustom(true, PadCustom()) }, onEditDone)
+                else toolButtons()
+            }
+            if (overlayOpen && !editing) overlay(Modifier.align(Alignment.TopCenter).padding(top = 48.dp).width(360.dp).heightIn(max = 280.dp))
+        } else BoxWithConstraints(Modifier.fillMaxSize()) {
+            val custom = portraitCustom
+            val maxOffset = maxHeight.value * 0.45f
             Column(Modifier.fillMaxSize()) {
+                // How far down the user moved the screen.
+                Spacer(Modifier.height(custom.screenOffsetDp.coerceAtMost(maxOffset).dp))
                 // One call site, so changing the DS layout resizes the same SurfaceView instead
                 // of replacing it. Tall (DS) frames are height-limited so the controls still fit.
                 val tall = aspect < 1f
@@ -151,15 +180,74 @@ fun PlayerScreen(
                     Modifier.fillMaxWidth().then(if (tall) Modifier.fillMaxHeight(0.62f) else Modifier),
                     contentAlignment = Alignment.TopCenter,
                 ) {
-                    GameSurface(onSurface, aspect, if (tall) Modifier.fillMaxSize() else Modifier.fillMaxWidth(), onTouch = onTouch)
+                    val area = if (tall) Modifier.fillMaxSize() else Modifier.fillMaxWidth()
+                    if (editing) {
+                        ScreenPlaceholder(aspect, area, draggable = true) { dy ->
+                            onCustom(false, custom.copy(screenOffsetDp = (custom.screenOffsetDp + dy).coerceIn(0f, maxOffset)))
+                        }
+                    } else {
+                        GameSurface(onSurface, aspect, area, onTouch = onTouch)
+                    }
                 }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) { toolButtons() }
-                if (overlayOpen) overlay(Modifier.fillMaxWidth().padding(horizontal = 8.dp).heightIn(max = 260.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                    if (editing) EditBar(custom.scale, { onCustom(false, custom.copy(scale = it)) }, { onCustom(false, PadCustom()) }, onEditDone)
+                    else toolButtons()
+                }
+                if (overlayOpen && !editing) overlay(Modifier.fillMaxWidth().padding(horizontal = 8.dp).heightIn(max = 260.dp))
                 Box(Modifier.fillMaxWidth().weight(1f)) {
-                    Gamepad(portraitPad, opacity = 1f, onButtons = onButtons)
+                    Gamepad(
+                        custom.applyTo(portraitPad), opacity = 1f, onButtons = onButtons,
+                        editing = editing, onMove = { id, x, y -> onCustom(false, custom.moved(id, x, y)) },
+                    )
                 }
             }
         }
+    }
+}
+
+/** Stands in for the game screen while editing the layout (the real one would draw over the edit bar). */
+@Composable
+private fun ScreenPlaceholder(aspect: Float, modifier: Modifier, draggable: Boolean, onDragDp: (Float) -> Unit = {}) =
+    BoxWithConstraints(modifier, contentAlignment = Alignment.Center) {
+        val width = when {
+            maxWidth == Dp.Infinity -> maxHeight * aspect
+            maxHeight == Dp.Infinity -> maxWidth
+            else -> minOf(maxWidth, maxHeight * aspect)
+        }
+        val density = LocalDensity.current
+        val currentOnDrag by rememberUpdatedState(onDragDp)
+        Box(
+            Modifier
+                .size(width, width / aspect)
+                .background(Color(0xFF1E2A38))
+                .border(2.dp, Color(0xFF90CAF9))
+                .then(
+                    if (draggable) Modifier.pointerInput(Unit) {
+                        detectVerticalDragGestures { change, dy ->
+                            change.consume()
+                            currentOnDrag(with(density) { dy.toDp().value })
+                        }
+                    } else Modifier,
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                if (draggable) "Game screen\nDrag it up or down.\nDrag the buttons to move them."
+                else "Game screen\nDrag the buttons to move them.",
+                color = Color.White, textAlign = TextAlign.Center,
+                modifier = Modifier.padding(16.dp),
+            )
+        }
+    }
+
+/** Replaces the tool buttons while editing: button size, back to the default layout, and done. */
+@Composable
+private fun EditBar(scale: Float, onScale: (Float) -> Unit, onReset: () -> Unit, onDone: () -> Unit) {
+    Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text("Size", color = Color.White, style = MaterialTheme.typography.labelLarge)
+        Slider(value = scale, onValueChange = onScale, valueRange = 0.6f..1.4f, modifier = Modifier.width(120.dp).padding(horizontal = 8.dp))
+        TextButton(onClick = onReset) { Text("Reset") }
+        FilledTonalButton(onClick = onDone) { Text("Done") }
     }
 }
 
@@ -183,6 +271,7 @@ fun PauseMenu(
     onQuit: () -> Unit,
     onDismiss: () -> Unit,
     onCheats: () -> Unit = {},
+    onEditControls: () -> Unit = {},
     /** DS only: current screen layout (null hides the picker). */
     dsLayout: DsLayout? = null,
     onDsLayout: (DsLayout) -> Unit = {},
@@ -211,6 +300,7 @@ fun PauseMenu(
                     }
                 }
                 FilledTonalButton(onClick = onCheats, Modifier.fillMaxWidth()) { Text("Cheats") }
+                FilledTonalButton(onClick = onEditControls, Modifier.fillMaxWidth()) { Text("Edit controls") }
                 FilledTonalButton(onClick = onReset, Modifier.fillMaxWidth()) { Text("Reset game") }
                 FilledTonalButton(onClick = onQuit, Modifier.fillMaxWidth()) { Text("Quit to library") }
             }
