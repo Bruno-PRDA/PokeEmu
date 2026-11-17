@@ -87,6 +87,40 @@ class NdsFileSystem(private val rom: RomSource) {
     }
 
     fun read(path: String): ByteArray? = paths[path]?.let(::read)
+
+    /** A NARC read piece by piece from the ROM (only its index is loaded), or null. */
+    fun openNarc(path: String): LazyNarc? {
+        val id = paths[path] ?: return null
+        val entry = rom.read(fatOffset + id * 8L, 8)
+        val start = entry.u32(0)
+        val end = entry.u32(4)
+        if (end <= start || end > rom.size) return null
+        return LazyNarc.open(rom, start, (end - start).toInt())
+    }
+}
+
+/** A NARC inside the ROM whose sub-files are read on demand. */
+class LazyNarc private constructor(private val rom: RomSource, private val dataStart: Long, private val ranges: IntArray) {
+    val size get() = ranges.size / 2
+    operator fun get(i: Int): ByteArray = rom.read(dataStart + ranges[2 * i], ranges[2 * i + 1] - ranges[2 * i])
+
+    companion object {
+        fun open(rom: RomSource, start: Long, length: Int): LazyNarc? {
+            val head = rom.read(start, minOf(length, 0x20))
+            if (!Narc.isNarc(head)) return null
+            val btaf = head.u16(0x0C)
+            val btafHead = rom.read(start + btaf, 12)
+            val count = btafHead.u16(8)
+            val btafSize = btafHead.u32(4).toInt()
+            val fat = rom.read(start + btaf + 12, count * 8)
+            val btnf = btaf + btafSize
+            val btnfSize = rom.read(start + btnf + 4, 4).u32(0).toInt()
+            val data = start + btnf + btnfSize + 8
+            val ranges = IntArray(count * 2) { fat.u32(it * 4).toInt() }
+            for (i in 0 until count) if (ranges[2 * i] > ranges[2 * i + 1] || data + ranges[2 * i + 1] > start + length) return null
+            return LazyNarc(rom, data, ranges)
+        }
+    }
 }
 
 /** A NARC archive: a numbered list of sub-files. */

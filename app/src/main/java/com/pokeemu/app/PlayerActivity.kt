@@ -84,6 +84,8 @@ class PlayerActivity : ComponentActivity() {
     private var overlayOpen by mutableStateOf(false)
     private var liveState by mutableStateOf<LiveState?>(null)
     private var romData by mutableStateOf<GameData?>(null)
+    /** Sprites from the ROM, for the battle overlay. */
+    private var sprites by mutableStateOf<com.pokeemu.core.SpriteSource?>(null)
     /** Reads the overlay state from a RAM snapshot; set once game data is ready. */
     private var liveReader: ((ByteArray) -> LiveState?)? = null
     private var liveRam: Pair<Long, Int> = EmulatorSession.GBA_EWRAM to EmulatorSession.GBA_EWRAM_SIZE
@@ -121,7 +123,7 @@ class PlayerActivity : ComponentActivity() {
                     onOpenMenu = { showDialog(Dialog.MENU) },
                     overlayOpen = overlayOpen,
                     onToggleOverlay = ::toggleOverlay,
-                    overlay = { mod -> OverlayPanel(liveState, romData, mod) },
+                    overlay = { mod -> OverlayPanel(liveState, romData, mod, sprites) },
                     aspect = if (isDs) dsLayout.aspect else 3f / 2f,
                     portraitPad = if (isDs) PadLayouts.dsPortrait else PadLayouts.portrait,
                     landscapePad = if (isDs) PadLayouts.dsLandscape else PadLayouts.landscape,
@@ -241,8 +243,12 @@ class PlayerActivity : ComponentActivity() {
                 else -> Gen3Game.FIRERED_LEAFGREEN
             }
             val otId = save?.trainer?.let { (it.secretId.toLong() shl 16) or it.trainerId.toLong() }
+            val gbaSprites = data?.sprites?.takeIf { it.hasPokemon }?.let { tables ->
+                com.pokeemu.gen3.Gen3Sprites(tables) { o, n -> if (o in rom.indices) rom.copyOfRange(o, minOf(rom.size, o + n)) else null }
+            }
             withContext(Dispatchers.Main) {
                 romData = data
+                sprites = gbaSprites
                 val reader = LiveReader(
                     playerOtId = otId,
                     game = game,
@@ -267,8 +273,10 @@ class PlayerActivity : ComponentActivity() {
                 speciesCount = data?.speciesNames?.size?.takeIf { it > 0 } ?: 2048,
                 moveCount = data?.moveNames?.size?.takeIf { it > 0 } ?: 1024,
             )
+            val dsSprites = runCatching { com.pokeemu.gen4.Gen4Sprites.open(com.pokeemu.gen4.FileRomSource(romFile)) }.getOrNull()
             withContext(Dispatchers.Main) {
                 romData = data
+                sprites = dsSprites
                 liveRam = Gen4LiveReader.RAM_ADDRESS to Gen4LiveReader.RAM_SIZE
                 liveReader = reader::read
             }

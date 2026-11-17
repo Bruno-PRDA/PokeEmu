@@ -3,6 +3,7 @@ package com.pokeemu.gen4
 import com.pokeemu.core.BaseStats
 import com.pokeemu.core.GameData
 import com.pokeemu.core.Learnsets
+import com.pokeemu.core.MoveInfo
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.InputStream
@@ -51,7 +52,17 @@ class Gen4RomData(
     val fairyIsType9: Boolean = false,
     override val report: List<String> = emptyList(),
     override val learnsets: Learnsets? = null,
+    /** Per move: category, power, type, accuracy (bytes 2..5 of the move data); empty when not found. */
+    val moveStats: List<IntArray> = emptyList(),
 ) : GameData {
+    override fun moveInfo(move: Int): MoveInfo? {
+        val m = moveStats.getOrNull(move)?.takeIf { move > 0 } ?: return null
+        return MoveInfo(
+            type = m[2], power = m[1], accuracy = m[3], pp = movePp.getOrElse(move) { 0 },
+            category = MoveInfo.Category.entries.getOrElse(m[0]) { MoveInfo.categoryByType(m[2], m[1]) },
+        )
+    }
+
     fun species(id: Int): String = speciesName(id)
     fun move(id: Int): String = moveName(id)
     override fun base(species: Int): BaseStats? = baseStats.getOrNull(species)
@@ -77,11 +88,13 @@ class Gen4RomData(
         d.writeBoolean(fairyIsType9)
         d.writeBoolean(learnsets != null)
         learnsets?.write(d)
+        d.writeInt(moveStats.size)
+        moveStats.forEach { m -> m.forEach(d::writeByte) }
         d.flush()
     }
 
     companion object {
-        const val FORMAT_VERSION = 3
+        const val FORMAT_VERSION = 4
 
         fun read(input: InputStream): Gen4RomData? {
             val d = DataInputStream(input.buffered())
@@ -97,7 +110,8 @@ class Gen4RomData(
             val pp = List(d.readInt()) { d.readShort().toInt() }
             val fairy = d.readBoolean()
             val learnsets = if (d.readBoolean()) Learnsets.read(d) else null
-            return Gen4RomData(lists[0], lists[1], lists[2], lists[3], base, pp, fairy, lists[4], learnsets)
+            val stats = List(d.readInt()) { IntArray(4) { d.readUnsignedByte() } }
+            return Gen4RomData(lists[0], lists[1], lists[2], lists[3], base, pp, fairy, lists[4], learnsets, stats)
         }
 
         /** Vanilla locations (HGSS, Platinum, Diamond/Pearl); hacks keep these paths. */
@@ -143,7 +157,9 @@ class Gen4RomData(
             val personal = personalNarc(fs)
             val base = personal?.let(::readBaseStats).orEmpty()
             report += if (base.isNotEmpty()) "Base stats for ${base.count { it != null }} species" else "Base stats not found — levels and stats can't be recalculated"
-            val pp = readMovePp(fs)
+            val moveNarc = moveNarc(fs)
+            val pp = moveNarc?.let { n -> (0 until n.size).map { i -> n[i].let { if (it.size >= 7) it.u8(6) else 0 } } }.orEmpty()
+            val moveStats = moveNarc?.let { n -> (0 until n.size).map { i -> n[i].let { e -> if (e.size >= 7) IntArray(4) { e.u8(2 + it) } else IntArray(4) } } }.orEmpty()
             report += if (pp.isNotEmpty()) "PP for ${pp.size} moves" else "Move PP not found"
             val clefairy = species.indexOfFirst { it.equals("Clefairy", ignoreCase = true) }
             val fairy9 = clefairy > 0 && base.getOrNull(clefairy)?.type1 == 9
@@ -152,7 +168,7 @@ class Gen4RomData(
                 Gen4Learnsets.scan(fs, rom, personal, species.size, moves?.size?.takeIf { it > 0 } ?: 1024, report)
             }.getOrNull()
 
-            return Gen4RomData(species, moves.orEmpty(), abilities.orEmpty(), items.orEmpty(), base, pp, fairy9, report, learnsets)
+            return Gen4RomData(species, moves.orEmpty(), abilities.orEmpty(), items.orEmpty(), base, pp, fairy9, report, learnsets, moveStats)
         }
 
         /** Personal data: 44 bytes per species (or form). Validated against Bulbasaur. */
@@ -183,15 +199,15 @@ class Gen4RomData(
         }
 
         /** Move data: power at 3, type at 4, accuracy at 5, PP at 6. Validated against Pound (40 power, Normal, 100%; hacks change its PP). */
-        private fun readMovePp(fs: NdsFileSystem): List<Int> {
+        private fun moveNarc(fs: NdsFileSystem): Narc? {
             for (path in MOVE_ARCHIVES) {
                 val narc = fs.read(path)?.takeIf(Narc::isNarc)?.let(Narc::parse) ?: continue
                 if (narc.size < 2) continue
                 val pound = narc[1]
                 if (pound.size < 7 || pound.u8(3) != 40 || pound.u8(4) != 0 || pound.u8(5) != 100) continue
-                return (0 until narc.size).map { i -> narc[i].let { if (it.size >= 7) it.u8(6) else 0 } }
+                return narc
             }
-            return emptyList()
+            return null
         }
     }
 }

@@ -21,6 +21,9 @@ interface GameData {
     fun basePp(move: Int): Int?
     /** Which moves each species can learn; null when the ROM's tables weren't found. */
     val learnsets: Learnsets? get() = null
+    /** Type, power, accuracy, PP and category of a move; null when unknown. */
+    fun moveInfo(move: Int): MoveInfo? = null
+    /** Pictures (Pokémon sprites, item icons) are read separately; see SpriteSource. */
 
     fun speciesName(id: Int) = speciesNames.getOrNull(id)?.takeIf { it.isNotBlank() } ?: "#$id"
     fun moveName(id: Int) = if (id == 0) "—" else moveNames.getOrNull(id)?.takeIf { it.isNotBlank() } ?: "Move #$id"
@@ -39,6 +42,21 @@ interface GameData {
             "Timid", "Hasty", "Serious", "Jolly", "Naive", "Modest", "Mild", "Quiet", "Bashful", "Rash",
             "Calm", "Gentle", "Sassy", "Careful", "Quirky",
         )
+    }
+}
+
+/** A move's battle data as stored in the ROM. Power 0 = no direct damage; accuracy 0 = never misses. */
+data class MoveInfo(val type: Int, val power: Int, val accuracy: Int, val pp: Int, val category: Category) {
+    enum class Category { PHYSICAL, SPECIAL, STATUS }
+
+    companion object {
+        /** Before Gen 4, damaging moves were physical or special by type. */
+        private val SPECIAL_TYPES = setOf(10, 11, 12, 13, 14, 15, 16, 17)
+        fun categoryByType(type: Int, power: Int) = when {
+            power == 0 -> Category.STATUS
+            type in SPECIAL_TYPES -> Category.SPECIAL
+            else -> Category.PHYSICAL
+        }
     }
 }
 

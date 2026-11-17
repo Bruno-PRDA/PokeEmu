@@ -69,6 +69,7 @@ fun EditorScreen(rom: RomEntry, onBack: () -> Unit) {
     var status by remember { mutableStateOf<String?>("Reading ROM…") }
     var editor by remember { mutableStateOf<MonEditor?>(null) }
     var manager by remember { mutableStateOf<SaveManager?>(null) }
+    var sprites by remember { mutableStateOf<com.pokeemu.core.SpriteSource?>(null) }
     var tick by remember { mutableIntStateOf(0) }
     var box by remember { mutableIntStateOf(0) }
     var moving by remember { mutableStateOf<Slot?>(null) }
@@ -89,7 +90,7 @@ fun EditorScreen(rom: RomEntry, onBack: () -> Unit) {
 
     suspend fun load() {
         val opened = OpenSave.open(context, rom) { status = it }
-        editor = opened.editor; manager = opened.manager; status = null
+        editor = opened.editor; manager = opened.manager; sprites = opened.sprites; status = null
     }
 
     LaunchedEffect(rom.uri) {
@@ -150,6 +151,7 @@ fun EditorScreen(rom: RomEntry, onBack: () -> Unit) {
                 onDelete = { act { it.delete(detailSlot) }; detail = null },
                 onExport = { exportSlot = detailSlot; exportLauncher.launch("${e.data.speciesName(pk.species)}.${e.fileExtension}") },
                 origin = origins.describe(pk),
+                sprites = sprites,
             )
             return
         }
@@ -199,7 +201,7 @@ fun EditorScreen(rom: RomEntry, onBack: () -> Unit) {
             Text("Party", style = MaterialTheme.typography.titleMedium)
             Grid(columns = 3, cells = 6) { i ->
                 val slot = Slot.Party(i)
-                Cell(e, e.partyMembers.getOrNull(i), selected = moving == slot, foreign = e.partyMembers.getOrNull(i)?.let { origins.isForeign(it, rom.name, e.fileExtension) } == true, onClick = { onCell(slot) }, onLongClick = { moving = slot })
+                Cell(e, e.partyMembers.getOrNull(i), sprites, selected = moving == slot, foreign = e.partyMembers.getOrNull(i)?.let { origins.isForeign(it, rom.name, e.fileExtension) } == true, onClick = { onCell(slot) }, onLongClick = { moving = slot })
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = { box = (box + e.boxCount - 1) % e.boxCount }) { Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Previous box") }
@@ -209,7 +211,7 @@ fun EditorScreen(rom: RomEntry, onBack: () -> Unit) {
             val contents = e.box(box)
             Grid(columns = 6, cells = e.boxSlots) { i ->
                 val slot = Slot.Box(box, i)
-                Cell(e, contents[i], selected = moving == slot, compact = true, foreign = contents[i]?.let { origins.isForeign(it, rom.name, e.fileExtension) } == true, onClick = { onCell(slot) }, onLongClick = { moving = slot })
+                Cell(e, contents[i], sprites, selected = moving == slot, compact = true, foreign = contents[i]?.let { origins.isForeign(it, rom.name, e.fileExtension) } == true, onClick = { onCell(slot) }, onLongClick = { moving = slot })
             }
             Text("Tap to edit · long-press to move · tap an empty slot to import a .${e.fileExtension}", style = MaterialTheme.typography.bodySmall)
         }
@@ -247,7 +249,7 @@ private fun Grid(columns: Int, cells: Int, content: @Composable (Int) -> Unit) {
 @OptIn(ExperimentalFoundationApi::class)
 @NonSkippableComposable // warnings depend on SaveEditor state
 @Composable
-private fun Cell(e: MonEditor, pk: Mon?, selected: Boolean, compact: Boolean = false, foreign: Boolean = false, onClick: () -> Unit, onLongClick: () -> Unit) {
+private fun Cell(e: MonEditor, pk: Mon?, sprites: com.pokeemu.core.SpriteSource?, selected: Boolean, compact: Boolean = false, foreign: Boolean = false, onClick: () -> Unit, onLongClick: () -> Unit) {
     val warn = pk != null && e.warnings(pk).isNotEmpty()
     Card(
         modifier = Modifier.fillMaxWidth().aspectRatio(if (compact) 1f else 2.2f)
@@ -264,14 +266,23 @@ private fun Cell(e: MonEditor, pk: Mon?, selected: Boolean, compact: Boolean = f
         Box(Modifier.fillMaxSize().padding(4.dp), contentAlignment = Alignment.Center) {
             if (foreign) ForeignDot(Modifier.align(Alignment.TopEnd))
             if (pk != null) {
-                val name = if (pk.isEgg) "Egg" else e.data.speciesName(pk.species)
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                val name = if (pk.isEgg) "Egg" else pk.nickname.ifBlank { e.data.speciesName(pk.species) }
+                if (compact) {
+                    // Box slot: the sprite says who it is; the level in the corner.
+                    MonSprite(sprites, if (pk.isEgg) 0 else pk.species, pk.isShiny, 48.dp, Modifier.align(Alignment.Center))
                     Text(
-                        name + if (pk.isShiny) "★" else "",
-                        maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        fontSize = if (compact) 10.sp else 14.sp, textAlign = TextAlign.Center,
+                        (if (pk.isShiny) "★" else "") + (e.level(pk)?.toString() ?: ""),
+                        Modifier.align(Alignment.BottomEnd), maxLines = 1, fontSize = 9.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    e.level(pk)?.let { Text("Lv$it", fontSize = if (compact) 9.sp else 12.sp) }
+                } else {
+                    Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
+                        MonSprite(sprites, if (pk.isEgg) 0 else pk.species, pk.isShiny, 48.dp)
+                        Column(Modifier.padding(start = 4.dp)) {
+                            Text(name + if (pk.isShiny) " ★" else "", maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 13.sp)
+                            e.level(pk)?.let { Text("Lv $it", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                        }
+                    }
                 }
             }
         }

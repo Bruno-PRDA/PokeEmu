@@ -2,6 +2,13 @@ package com.pokeemu.app
 
 import android.content.Context
 import com.pokeemu.core.MonEditor
+import com.pokeemu.core.SpriteSource
+import com.pokeemu.gen3.Gen3Sprites
+import com.pokeemu.gen3.RomData
+import com.pokeemu.gen4.FileRomSource
+import com.pokeemu.gen4.Gen4Sprites
+import java.io.File
+import java.io.RandomAccessFile
 import com.pokeemu.gen3.Gen3Save
 import com.pokeemu.gen3.SaveEditor
 import com.pokeemu.gen4.Gen4Save
@@ -13,11 +20,33 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /** A game's save opened for editing: the editor, the manager that writes it back, and the ROM id. */
-class OpenSave(val editor: MonEditor, val manager: SaveManager, val romId: String) {
+class OpenSave(
+    val editor: MonEditor,
+    val manager: SaveManager,
+    val romId: String,
+    /** Sprites and item icons from this game's ROM. */
+    val sprites: SpriteSource? = null,
+) {
     /** Writes the editor's changes to the save (backing up the old one first, and verifying the result). */
     suspend fun write() = withContext(Dispatchers.IO) { manager.applyEdit(editor.toBytes(), editor::verify) }
 
     companion object {
+        /** Reads pictures straight from the ROM file (a GBA ROM isn't kept in memory). */
+        fun spritesFor(rom: RomEntry, file: File, editor: MonEditor): SpriteSource? = runCatching {
+            if (rom.header.platform == Platform.NDS) {
+                Gen4Sprites.open(FileRomSource(file))
+            } else {
+                val tables = (editor.data as? RomData)?.sprites ?: return@runCatching null
+                Gen3Sprites(tables) { offset, length ->
+                    RandomAccessFile(file, "r").use { f ->
+                        if (offset < 0 || offset >= f.length()) return@use null
+                        val n = minOf(length.toLong(), f.length() - offset).toInt()
+                        ByteArray(n).also { f.seek(offset.toLong()); f.readFully(it) }
+                    }
+                }
+            }
+        }.getOrNull()
+
         /**
          * Reads the ROM's names/data (cached after the first time) and parses the
          * save. Throws with a message for the user if either can't be read.
@@ -41,7 +70,7 @@ class OpenSave(val editor: MonEditor, val manager: SaveManager, val romId: Strin
                     }
                     SaveEditor(Gen3Save.parse(manager.saveFile.readBytes()), data)
                 }
-                OpenSave(editor, manager, id)
+                OpenSave(editor, manager, id, spritesFor(rom, local.file, editor))
             }
     }
 }

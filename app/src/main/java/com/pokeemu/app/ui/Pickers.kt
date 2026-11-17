@@ -2,6 +2,12 @@ package com.pokeemu.app.ui
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
+import androidx.compose.ui.Alignment
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -28,7 +34,15 @@ import com.pokeemu.core.label
  * the ROM) it falls back to typing a number.
  */
 @Composable
-fun IdPicker(title: String, names: List<String>, allowZero: Boolean, onPick: (Int) -> Unit, onDismiss: () -> Unit) {
+fun IdPicker(
+    title: String,
+    names: List<String>,
+    allowZero: Boolean,
+    onPick: (Int) -> Unit,
+    onDismiss: () -> Unit,
+    /** Optional picture before each entry (sprite, item icon). */
+    leading: (@Composable (Int) -> Unit)? = null,
+) {
     var query by remember { mutableStateOf("") }
     val entries = remember(names, allowZero) {
         val none = if (allowZero) listOf(0 to "(none)") else emptyList()
@@ -56,10 +70,17 @@ fun IdPicker(title: String, names: List<String>, allowZero: Boolean, onPick: (In
                 } else {
                     LazyColumn(Modifier.heightIn(max = 360.dp)) {
                         items(filtered, key = { it.first }) { (id, name) ->
-                            Text(
-                                "$name  ·  #$id",
-                                Modifier.fillMaxWidth().clickable { onPick(id) }.padding(vertical = 10.dp),
-                            )
+                            Row(
+                                Modifier.fillMaxWidth().clickable { onPick(id) }.padding(vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                if (leading != null) {
+                                    Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) { if (id != 0) leading(id) }
+                                    Spacer(Modifier.width(10.dp))
+                                }
+                                Text(name, Modifier.weight(1f))
+                                Text("#$id", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                         }
                     }
                 }
@@ -101,14 +122,14 @@ fun MovePicker(
     }
     var query by remember { mutableStateOf("") }
     val entries = remember(learnable, known) {
-        val list = mutableListOf(0 to "(none)")
-        for ((move, source) in learnable) list += move to "${data.moveName(move)}  ·  ${source.label(data::speciesName)}"
-        for (move in known) if (move != 0 && move !in learnable) list += move to "${data.moveName(move)}  ·  already known"
+        val list = mutableListOf(Triple(0, "(none)", ""))
+        for ((move, source) in learnable) list += Triple(move, data.moveName(move), source.label(data::speciesName))
+        for (move in known) if (move != 0 && move !in learnable) list += Triple(move, data.moveName(move), "already known")
         list
     }
     val filtered = remember(query, entries) {
         val q = query.trim()
-        if (q.isEmpty()) entries else entries.filter { (id, text) -> text.contains(q, ignoreCase = true) || id.toString() == q }
+        if (q.isEmpty()) entries else entries.filter { (id, name, how) -> name.contains(q, ignoreCase = true) || how.contains(q, ignoreCase = true) || id.toString() == q }
     }
     val missing = remember(learnsets) {
         val has = learnsets?.has.orEmpty()
@@ -131,8 +152,26 @@ fun MovePicker(
                     modifier = Modifier.padding(vertical = 6.dp),
                 )
                 LazyColumn(Modifier.heightIn(max = 360.dp)) {
-                    items(filtered, key = { it.first }) { (id, text) ->
-                        Text(text, Modifier.fillMaxWidth().clickable { onPick(id) }.padding(vertical = 10.dp))
+                    items(filtered, key = { it.first }) { (id, name, how) ->
+                        val info = data.moveInfo(id)
+                        Row(
+                            Modifier.fillMaxWidth().clickable { onPick(id) }.padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(name, style = MaterialTheme.typography.bodyLarge)
+                                if (how.isNotEmpty()) Text(how, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            if (info != null) {
+                                Column(horizontalAlignment = Alignment.End) {
+                                    TypeChip(data.typeName(info.type), compact = true)
+                                    Text(
+                                        if (info.power > 1) "${info.power}" else "—",
+                                        style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }

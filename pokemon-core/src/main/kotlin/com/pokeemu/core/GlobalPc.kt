@@ -75,7 +75,11 @@ class GlobalPc(private val dir: File) {
     fun remove(stored: StoredMon) {
         File(dir, "${stored.id}.bin").delete()
         File(dir, "${stored.id}.properties").delete()
+        File(dir, "${stored.id}.png").delete() // its sprite, saved by the app
     }
+
+    /** Where the app keeps a stored Pokémon's sprite (so it shows even if its game is removed). */
+    fun spriteFile(stored: StoredMon) = File(dir, "${stored.id}.png")
 
     private fun write(s: StoredMon) {
         dir.mkdirs()

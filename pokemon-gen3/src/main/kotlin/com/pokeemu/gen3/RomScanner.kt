@@ -47,14 +47,20 @@ class RomScanner(private val rom: ByteArray) {
         tables.forEach { report += it.description() }
         val (species, moves, abilities, items) = tables.map { it.names }
         val base = baseStats(species.size.coerceAtLeast(412))
-        val pp = movePp(moves.size.coerceAtLeast(355))
+        val moveData = moveData(moves.size.coerceAtLeast(355))
+        val pp = moveData?.pp.orEmpty()
         val learnsets = LearnsetScanner(
             rom, referenced,
             speciesCount = species.size.takeIf { it > 0 } ?: 412,
             moveCount = moves.size.takeIf { it > 0 } ?: 355,
             itemNames = items,
         ).scan(report).takeIf { it.has.isNotEmpty() }
-        return RomData(species, moves, abilities, items, base, pp, report.toList(), learnsets)
+        val sprites = Gen3Sprites.scan(rom, referenced, species.size.takeIf { it > 0 } ?: 412, report)
+        return RomData(
+            species, moves, abilities, items, base, pp, report.toList(), learnsets,
+            moveData?.power.orEmpty(), moveData?.type.orEmpty(), moveData?.accuracy.orEmpty(), moveData?.category.orEmpty(),
+            sprites,
+        )
     }
 
     private class NameTable(val what: String, val table: Table?, val names: List<String>) {
@@ -275,7 +281,9 @@ class RomScanner(private val rom: ByteArray) {
 
     // ---- move PP -------------------------------------------------------------------------
 
-    private fun movePp(count: Int): List<Int> {
+    private class MoveData(val pp: List<Int>, val power: List<Int>, val type: List<Int>, val accuracy: List<Int>, val category: List<Int>)
+
+    private fun moveData(count: Int): MoveData? {
         // power, type, accuracy, pp of Pound, Karate Chop, DoubleSlap.
         val p1 = byteArrayOf(40, 0, 100, 35)
         val p2 = byteArrayOf(50, 1, 100, 25)
@@ -290,11 +298,22 @@ class RomScanner(private val rom: ByteArray) {
             }
         }
         (candidates.firstOrNull { referenced[it.first] } ?: candidates.firstOrNull())?.let { (base, stride) ->
-            report += "Found move data: entry size $stride"
-            return List(count) { m -> rom.getOrNull(base + 3 + m * stride)?.toInt()?.and(0xFF) ?: 0 }
+            // base points at move 0's power: power, type, accuracy, pp follow.
+            fun field(m: Int, off: Int) = rom.getOrNull(base + off + m * stride)?.toInt()?.and(0xFF) ?: 0
+            // Hacks with the physical/special split store it in a spare byte: find the one where known moves agree.
+            val known = listOf(1 to 0, 33 to 0, 52 to 1, 85 to 1, 45 to 2, 14 to 2) // Pound, Tackle, Ember, Thunderbolt, Growl, Swords Dance
+            val splitAt = (5 until stride).firstOrNull { off -> known.all { (m, c) -> field(m, off) == c } }
+            report += "Found move data: entry size $stride" + if (splitAt != null) " (with physical/special split)" else ""
+            return MoveData(
+                pp = List(count) { field(it, 3) },
+                power = List(count) { field(it, 0) },
+                type = List(count) { field(it, 1) },
+                accuracy = List(count) { field(it, 2) },
+                category = if (splitAt != null) List(count) { field(it, splitAt) } else emptyList(),
+            )
         }
         report += "Could not find move PP — new moves get 5 PP"
-        return emptyList()
+        return null
     }
 
     // ---- byte search ----------------------------------------------------------------------

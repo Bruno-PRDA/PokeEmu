@@ -1,6 +1,7 @@
 package com.pokeemu.gen3
 
 import com.pokeemu.core.Learnsets
+import com.pokeemu.core.MoveInfo
 
 import com.pokeemu.core.BaseStats
 import com.pokeemu.core.GameData
@@ -28,7 +29,22 @@ data class RomData(
     /** Human-readable notes on what was found, for the "ROM data" info panel. */
     override val report: List<String>,
     override val learnsets: Learnsets? = null,
+    /** Per move: power, type, accuracy, category (0 physical, 1 special, 2 status); empty when not found. */
+    val movePower: List<Int> = emptyList(),
+    val moveType: List<Int> = emptyList(),
+    val moveAccuracy: List<Int> = emptyList(),
+    val moveCategory: List<Int> = emptyList(),
+    val sprites: SpriteTables = SpriteTables(),
 ) : GameData {
+    override fun moveInfo(move: Int): MoveInfo? {
+        if (move <= 0 || move >= movePower.size) return null
+        val power = movePower[move]
+        val type = moveType.getOrElse(move) { 0 }
+        val category = moveCategory.getOrNull(move)?.let { MoveInfo.Category.entries.getOrNull(it) }
+            ?: MoveInfo.categoryByType(type, power)
+        return MoveInfo(type, power, moveAccuracy.getOrElse(move) { 0 }, movePp.getOrElse(move) { 0 }, category)
+    }
+
     override fun base(species: Int): BaseStats? = baseStats.getOrNull(species)
     override fun basePp(move: Int): Int? = movePp.getOrNull(move)?.takeIf { it > 0 }
 
@@ -49,12 +65,14 @@ data class RomData(
         d.writeInt(movePp.size); movePp.forEach(d::writeShort)
         d.writeBoolean(learnsets != null)
         learnsets?.write(d)
+        for (list in listOf(movePower, moveType, moveAccuracy, moveCategory)) { d.writeInt(list.size); list.forEach(d::writeShort) }
+        with(sprites) { listOf(frontPics, palettes, shinyPalettes, shinyTagOffset, itemIcons, itemIconCount).forEach(d::writeInt) }
         d.flush()
     }
 
     companion object {
         /** Bump when the scanner changes so cached results are rebuilt. */
-        const val FORMAT_VERSION = 3
+        const val FORMAT_VERSION = 4
 
         val TYPE_NAMES = listOf(
             "Normal", "Fighting", "Flying", "Poison", "Ground", "Rock", "Bug", "Ghost", "Steel", "???",
@@ -78,7 +96,11 @@ data class RomData(
             }
             val pp = List(d.readInt()) { d.readShort().toInt() }
             val learnsets = if (d.readBoolean()) Learnsets.read(d) else null
-            return RomData(species, moves, abilities, items, base, pp, report, learnsets)
+            val moveLists = List(4) { List(d.readInt()) { d.readShort().toInt() } }
+            val t = List(6) { d.readInt() }
+            val sprites = SpriteTables(t[0], t[1], t[2], t[3], t[4], t[5])
+            return RomData(species, moves, abilities, items, base, pp, report, learnsets,
+                moveLists[0], moveLists[1], moveLists[2], moveLists[3], sprites)
         }
     }
 }

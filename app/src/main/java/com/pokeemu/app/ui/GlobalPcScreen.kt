@@ -24,6 +24,11 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.foundation.layout.requiredSize
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -129,7 +134,12 @@ fun GlobalPcScreen(games: List<RomEntry>, onBack: () -> Unit) {
         val name = displayName(e.data.speciesName(mon.species), mon.nickname)
         pc.requireCanDeposit(mon)
         e.delete(slot) // refuses to empty the party, before anything is written
-        val entry = withContext(Dispatchers.IO) { pc.deposit(e, mon, game!!.name, o.romId) }
+        val entry = withContext(Dispatchers.IO) {
+            pc.deposit(e, mon, game!!.name, o.romId).also { stored ->
+                // Keep its picture with it: the PC shows it even after its game is removed.
+                runCatching { o.sprites?.pokemon(mon.species, mon.isShiny)?.let { savePng(it, pc.spriteFile(stored)) } }
+            }
+        }
         try {
             o.write()
         } catch (ex: Exception) {
@@ -178,13 +188,13 @@ fun GlobalPcScreen(games: List<RomEntry>, onBack: () -> Unit) {
                     )
                 } else {
                     LazyVerticalGrid(
-                        GridCells.Adaptive(104.dp),
+                        GridCells.Adaptive(150.dp),
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         items(stored, key = { it.id }) { s ->
-                            StoredCard(s) {
+                            StoredCard(s, pc.spriteFile(s)) {
                                 if (open == null) toast(if (game == null) "Pick a game below to move it into" else "That game's save isn't open")
                                 else withdraw = s
                             }
@@ -283,14 +293,20 @@ private fun CenteredNote(text: String, loading: Boolean = false) {
 }
 
 @Composable
-private fun StoredCard(s: StoredMon, onClick: () -> Unit) {
-    Card(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(10.dp)) {
+private fun StoredCard(s: StoredMon, sprite: File, onClick: () -> Unit) {
+    ElevatedCard(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        SpriteTile(56.dp) { SavedSprite(sprite, 52.dp) }
+        Column(Modifier.padding(start = 8.dp)) {
             Text(
-                (if (s.shiny) "★ " else "") + s.nickname.ifBlank { s.speciesName },
+                s.nickname.ifBlank { s.speciesName } + if (s.shiny) " ★" else "",
                 fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
-            Text(s.speciesName + (s.level?.let { " · Lv$it" } ?: ""), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            val nicknamed = s.nickname.isNotBlank() && Transfer.normalize(s.nickname) != Transfer.normalize(s.speciesName)
+            Text(
+                listOfNotNull(s.speciesName.takeIf { nicknamed }, s.level?.let { "Lv $it" }).joinToString(" · "),
+                style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
             s.originGame?.takeIf { Transfer.normalize(it) != Transfer.normalize(s.fromGame) }?.let {
                 Text("caught in $it", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.tertiary, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
@@ -301,7 +317,25 @@ private fun StoredCard(s: StoredMon, onClick: () -> Unit) {
                 maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
         }
+        }
     }
+}
+
+/** A stored Pokémon's saved sprite. */
+@Composable
+private fun SavedSprite(file: File, size: androidx.compose.ui.unit.Dp) {
+    val image by androidx.compose.runtime.produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, file) {
+        value = withContext(Dispatchers.IO) { android.graphics.BitmapFactory.decodeFile(file.path)?.asImageBitmap() }
+    }
+    // Same pixel scale as live sprites (64 px per [size]); DS sprites' wider margin is clipped.
+    androidx.compose.foundation.layout.Box(Modifier.size(size).clipToBounds(), contentAlignment = Alignment.Center) {
+        image?.let { androidx.compose.foundation.Image(it, null, Modifier.requiredSize(size * (it.width / 64f)), filterQuality = androidx.compose.ui.graphics.FilterQuality.None) }
+    }
+}
+
+private fun savePng(p: com.pokeemu.core.Picture, file: File) {
+    val bitmap = android.graphics.Bitmap.createBitmap(p.argb, p.width, p.height, android.graphics.Bitmap.Config.ARGB_8888)
+    file.outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
 }
 
 @Composable
@@ -334,7 +368,7 @@ private fun GameBoxes(o: OpenSave, box: Int, tick: Int, onBox: (Int) -> Unit, on
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 items(slots) { (slot, mon) ->
-                    SlotCell(e.data.speciesName(mon?.species ?: 0), mon, mon?.let(e::level), foreign = mon?.let(isForeign) == true) { onSlot(slot) }
+                    SlotCell(o.sprites, mon, mon?.let(e::level), foreign = mon?.let(isForeign) == true) { onSlot(slot) }
                 }
             }
         }
@@ -345,7 +379,7 @@ private fun GameBoxes(o: OpenSave, box: Int, tick: Int, onBox: (Int) -> Unit, on
 private fun key(tick: Int, content: @Composable () -> Unit) = androidx.compose.runtime.key(tick) { content() }
 
 @Composable
-private fun SlotCell(species: String, mon: Mon?, level: Int?, foreign: Boolean, onClick: () -> Unit) {
+private fun SlotCell(sprites: com.pokeemu.core.SpriteSource?, mon: Mon?, level: Int?, foreign: Boolean, onClick: () -> Unit) {
     if (mon == null) {
         OutlinedCard(Modifier.fillMaxWidth().aspectRatio(0.9f), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {}
         return
@@ -353,20 +387,21 @@ private fun SlotCell(species: String, mon: Mon?, level: Int?, foreign: Boolean, 
     Card(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth().aspectRatio(0.9f),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
     ) {
         Box(Modifier.fillMaxSize()) {
         if (foreign) ForeignDot(Modifier.align(Alignment.TopEnd).padding(4.dp))
+        Text(
+            (if (mon.isShiny) "★" else "") + if (mon.isEgg) "Egg" else (level?.toString() ?: ""),
+            Modifier.align(Alignment.BottomEnd).padding(end = 4.dp, bottom = 2.dp),
+            fontSize = 9.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         Column(
             Modifier.fillMaxSize().padding(2.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
-            Text(
-                (if (mon.isShiny) "★" else "") + if (mon.isEgg) "Egg" else species,
-                fontSize = 10.sp, lineHeight = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center,
-            )
-            if (level != null && !mon.isEgg) Text("Lv$level", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSecondaryContainer)
+            MonSprite(sprites, if (mon.isEgg) 0 else mon.species, mon.isShiny, 44.dp)
         }
         }
     }
