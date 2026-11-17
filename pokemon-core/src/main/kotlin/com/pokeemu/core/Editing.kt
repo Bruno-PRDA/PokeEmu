@@ -99,7 +99,14 @@ interface Mon {
 }
 
 /** What the battle overlay shows: your party and the opponent's, straight from game RAM. */
-data class LiveState(val party: List<Mon>, val opponents: List<Mon>)
+data class LiveState(
+    val party: List<Mon>,
+    val opponents: List<Mon>,
+    /** Where each opponent's record starts in the RAM that was read (for challenge modes). */
+    val opponentOffsets: List<Int> = emptyList(),
+    /** True when the opponents are wild Pokémon (they carry the player's trainer ID). */
+    val opponentsWild: Boolean = false,
+)
 
 /**
  * Editable view of a save's Pokémon. Changes stay in memory until [toBytes];

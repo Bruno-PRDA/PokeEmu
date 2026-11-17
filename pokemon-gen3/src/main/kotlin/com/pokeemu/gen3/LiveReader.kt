@@ -48,7 +48,16 @@ class LiveReader(
     fun read(ram: ByteArray, iwram: ByteArray?): LiveState? {
         val offset = partyOffset?.takeIf { record(ram, it) != null } ?: locate(ram).also { partyOffset = it } ?: return null
         val showOpponent = iwram?.let { inBattle(it) } ?: true
-        return LiveState(run(ram, offset), if (showOpponent) run(ram, offset + opponentDelta) else emptyList())
+        val opponents = if (showOpponent) run(ram, offset + opponentDelta) else emptyList()
+        return LiveState(
+            run(ram, offset), opponents,
+            opponentOffsets = opponents.indices.map { offset + opponentDelta + it * Pk3.PARTY_SIZE },
+            // Wild Pokémon are created with the player's trainer ID; trainers' have their own.
+            // Without a save yet, the lead party Pokémon's ID stands in for the player's.
+            opponentsWild = (playerOtId ?: run(ram, offset).firstOrNull()?.otId).let { id ->
+                id != null && opponents.isNotEmpty() && opponents.all { it.otId == id }
+            },
+        )
     }
 
     private var gMainOffset: Int? = null
@@ -128,4 +137,11 @@ class LiveReader(
         private const val MAX_STAT = 999
         private const val MAX_EXP = 2_000_000L
     }
+}
+
+/** The in-RAM party record [record] made shiny (same nature, gender and ability), re-encrypted. */
+fun Pk3.shinyRecord(): ByteArray {
+    val copy = Pk3(toBytes())
+    copy.personality = com.pokeemu.core.ShinyPid.reroll(personality, trainerId, secretId)
+    return copy.toBytes()
 }

@@ -14,6 +14,8 @@ internal object Gen4Learnsets {
     private val LEARNSET_ARCHIVES = listOf("a/0/3/3", "poketool/personal/wotbl.narc", "poketool/personal_pearl/wotbl.narc")
     private val EVOLUTION_ARCHIVES = listOf("a/0/3/4", "poketool/personal/evo.narc", "poketool/personal_pearl/evo.narc")
     private val EGG_ARCHIVES = listOf("a/2/2/9")
+    /** Engines that drop the TM bits from the personal data keep, per species, every move it can be taught. */
+    private val TEACHABLE_ARCHIVES = listOf("data/tutor_moves.narc")
 
     /** HM moves at the end of the TM list. DP/Pt: ... Defog ...; HGSS: ... Whirlpool ... */
     private val HM_LISTS = listOf(
@@ -40,14 +42,21 @@ internal object Gen4Learnsets {
         val compat = personal?.let { p -> List(p.size) { i -> p[i].let { e -> if (e.size >= 0x2C) BitSet.valueOf(e.copyOfRange(0x1C, 0x2C)) else BitSet() } } }
             ?.takeIf(::plausibleTmCompat)
         val hasTm = tmMoves != null && compat != null
-        report += if (hasTm) "TM/HM compatibility found" else "TM/HM compatibility not found"
-        report += "Move tutors aren't read from DS ROMs yet"
+        val teachable = if (hasTm) null else teachable(fs, moveCount)
+        report += when {
+            hasTm -> "TM/HM compatibility found"
+            teachable != null -> "TM, HM and tutor moves found (one list per species)"
+            else -> "TM/HM compatibility not found"
+        }
+        if (teachable == null) report += "Move tutors aren't read from DS ROMs yet"
         val l = Learnsets(
             levelUp = levelUp.orEmpty(),
             tmMoves = if (hasTm) tmMoves!! else emptyList(), hmCount = if (hasTm) 8 else 0,
             tmCompat = if (hasTm) compat!! else emptyList(),
             eggMoves = egg.orEmpty(),
+            tutorMoves = teachable?.first.orEmpty(), tutorCompat = teachable?.second.orEmpty(),
             evolutions = evolutions.orEmpty(),
+            tutorIncludesTms = teachable != null,
         )
         return l.takeIf { it.has.isNotEmpty() }
     }
@@ -138,6 +147,26 @@ internal object Gen4Learnsets {
                 val b = narc[i]
                 Learnsets.parseEggMoves({ k -> if (2 * k + 2 <= b.size) b.u16(2 * k) else null }, speciesCount, moveCount)?.let { return it }
             }
+        }
+        return null
+    }
+
+    /**
+     * Per-species lists of every move a species can be taught (u16 moves,
+     * ending at 0xFFFF or 0). Returns (all such moves, per-species bits over them).
+     */
+    private fun teachable(fs: NdsFileSystem, moveCount: Int): Pair<List<Int>, List<BitSet>>? {
+        for (path in TEACHABLE_ARCHIVES) {
+            val narc = narc(fs, path) ?: continue
+            if (narc.size < 400) continue
+            val lists = List(narc.size) { s ->
+                val b = narc[s]
+                (0 until b.size / 2).map { b.u16(2 * it) }.takeWhile { it != 0xFFFF && it != 0 }.filter { it < moveCount }
+            }
+            if (lists.count { it.isNotEmpty() } * 2 < narc.size) continue
+            val moves = lists.flatten().distinct().sorted()
+            val index = moves.withIndex().associate { (i, m) -> m to i }
+            return moves to lists.map { l -> BitSet().apply { l.forEach { set(index.getValue(it)) } } }
         }
         return null
     }

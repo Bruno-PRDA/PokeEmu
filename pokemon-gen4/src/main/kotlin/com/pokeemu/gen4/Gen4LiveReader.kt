@@ -57,7 +57,15 @@ class Gen4LiveReader(
         val opponent = parties
             .filter { it.pids.intersect(playerPids).isEmpty() && isAllocated(ram, it) }
             .maxWithOrNull(compareBy<Party> { lastChange(it) }.thenByDescending { it.offset })
-        return LiveState(player.mons, opponent?.mons.orEmpty())
+        val foes = opponent?.mons.orEmpty()
+        return LiveState(
+            player.mons, foes,
+            opponentOffsets = foes.indices.map { opponent!!.offset + it * Pk4.PARTY_SIZE },
+            // Wild Pokémon carry the player's trainer ID.
+            // Without a save yet, the lead party Pokémon's IDs stand in for the player's.
+            opponentsWild = foes.isNotEmpty() && if (trainerId != null) foes.all(::isPlayers) else
+                player.mons.firstOrNull()?.let { lead -> foes.all { it.trainerId == lead.trainerId && it.secretId == lead.secretId } } == true,
+        )
     }
 
     /** True if a used heap block ("UD" header within 64 bytes before) contains this party. */
@@ -117,4 +125,11 @@ class Gen4LiveReader(
         private const val HEAP_USED = 0x5544
         private const val HEAP_FREE = 0x5246
     }
+}
+
+/** This party record made shiny (same nature, gender and ability), re-encrypted. */
+fun Pk4.shinyRecord(): ByteArray {
+    val copy = Pk4(toBytes())
+    copy.personality = com.pokeemu.core.ShinyPid.reroll(personality, trainerId, secretId)
+    return copy.toBytes()
 }

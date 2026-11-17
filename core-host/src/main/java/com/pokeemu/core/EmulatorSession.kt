@@ -58,6 +58,9 @@ class EmulatorSession private constructor() {
      * when the address isn't mapped. Safe to call while the game runs.
      */
     fun readBus(address: Long, length: Int): ByteArray? = NativeBridge.nativeReadBus(address, length)
+
+    /** Writes game RAM at a console bus address (between frames). False if it isn't RAM the core exposes. */
+    fun writeBus(address: Long, data: ByteArray): Boolean = NativeBridge.nativeWriteBus(address, data)
     val fps: Double get() = NativeBridge.nativeFps()
 
     /** Current frame as a Bitmap (for save-state thumbnails), or null. */
@@ -95,14 +98,23 @@ class EmulatorSession private constructor() {
          * (created/updated as the game saves). Throws on failure.
          */
         @Synchronized
-        fun open(coreLibrary: String, systemDir: File, romFile: File, saveFile: File): EmulatorSession {
+        fun open(
+            coreLibrary: String,
+            systemDir: File,
+            romFile: File,
+            saveFile: File,
+            /** Changes to the game data while it runs (offset in the ROM -> bytes); the file is never changed. */
+            romPatches: List<Pair<Long, ByteArray>> = emptyList(),
+        ): EmulatorSession {
             active?.close()
             systemDir.mkdirs()
             saveFile.parentFile?.mkdirs()
             check(NativeBridge.nativeCreate(coreLibrary, systemDir.absolutePath, saveFile.parentFile!!.absolutePath)) {
                 "Could not load emulator core $coreLibrary"
             }
-            if (!NativeBridge.nativeLoadGame(romFile.absolutePath, saveFile.absolutePath)) {
+            val offsets = LongArray(romPatches.size) { romPatches[it].first }
+            val bytes = Array(romPatches.size) { romPatches[it].second }
+            if (!NativeBridge.nativeLoadGame(romFile.absolutePath, saveFile.absolutePath, offsets, bytes)) {
                 NativeBridge.nativeDestroy()
                 throw IllegalStateException("The core could not load this ROM")
             }

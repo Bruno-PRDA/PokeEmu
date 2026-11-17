@@ -94,7 +94,7 @@ class Gen4RomData(
     }
 
     companion object {
-        const val FORMAT_VERSION = 4
+        const val FORMAT_VERSION = 5
 
         fun read(input: InputStream): Gen4RomData? {
             val d = DataInputStream(input.buffered())

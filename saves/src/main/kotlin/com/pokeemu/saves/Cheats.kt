@@ -15,6 +15,16 @@ data class Cheat(val name: String, val lines: List<String>, val enabled: Boolean
  */
 class CheatStore(storage: GameStorage, romId: String) {
     private val file = File(storage.gameDir(romId), "cheats.txt")
+    private val evolveFlag = File(storage.gameDir(romId), "cheat-evolve-without-trading")
+
+    /**
+     * Built-in cheat: trade evolutions (and other impossible ones) happen by
+     * levelling up or using the item. Applied to the game's data in memory at
+     * start; the ROM file is never changed.
+     */
+    var evolveWithoutTrading: Boolean
+        get() = evolveFlag.isFile
+        set(on) { if (on) evolveFlag.writeText("on") else evolveFlag.delete() }
 
     fun load(): List<Cheat> = runCatching {
         file.takeIf { it.isFile }?.readLines().orEmpty().mapNotNull { line ->

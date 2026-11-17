@@ -19,6 +19,8 @@ internal class LearnsetScanner(
     private val speciesCount: Int,
     private val moveCount: Int,
     private val itemNames: List<String>,
+    /** The item table (base, entry size), when its names are stored inline in the entries. */
+    private val itemTable: Pair<Int, Int>? = null,
 ) {
     private fun targets(align: Int): Sequence<Int> = sequence {
         var t = referenced.nextSetBit(0)
@@ -127,23 +129,15 @@ internal class LearnsetScanner(
     // ---- evolutions -------------------------------------------------------------------
 
     private fun evolutions(): Pair<List<List<Int>>, String>? {
-        fun target(t: Int, stride: Int, species: Int, slot: Int = 0) = u16At(t + stride * species + 8 * slot + 4)
-        for (t in targets(4)) {
-            for (stride in EVO_STRIDES) {
-                // First-generation starters, Caterpie and Pidgey lines: kept by every game and hack.
-                if (EVO_ANCHORS.any { (from, to) -> target(t, stride, from) != to }) continue
-                if (t + stride * speciesCount > rom.size) continue
-                val list = List(speciesCount) { s ->
-                    (0 until stride / 8).mapNotNull { slot ->
-                        val method = u16At(t + stride * s + 8 * slot) ?: 0
-                        val to = target(t, stride, s, slot) ?: 0
-                        to.takeIf { method != 0 && it in 1 until speciesCount }
-                    }
-                }
-                return list to "${stride / 8} per species at 0x%06X".format(t)
+        val (t, stride) = Gen3Evolutions.locate(rom, referenced, speciesCount) ?: return null
+        val list = List(speciesCount) { s ->
+            (0 until stride / 8).mapNotNull { slot ->
+                val method = u16At(t + stride * s + 8 * slot) ?: 0
+                val to = u16At(t + stride * s + 8 * slot + 4) ?: 0
+                to.takeIf { method != 0 && it in 1 until speciesCount }
             }
         }
-        return null
+        return list to "${stride / 8} per species at 0x%06X".format(t)
     }
 
     // ---- egg moves --------------------------------------------------------------------
@@ -163,6 +157,83 @@ internal class LearnsetScanner(
 
     /** (TM moves then HM moves, HM count, per-species compatibility). */
     private fun tmData(): Triple<List<Int>, Int, List<BitSet>>? {
+        // Preferred: the TM items themselves say which move they teach (works however a hack numbers TMs).
+        tmListFromItems()?.let { (moves, hms) ->
+            val stride = if (moves.size <= 64) 8 else 16
+            tmCompat(stride, bits = moves.size)?.let { return Triple(moves, hms, it) }
+        }
+        return tmDataByHms()
+    }
+
+    /**
+     * The TM/HM move list, found through the TM items: each TM item's
+     * description is its move's description (the same text pointer), which
+     * gives the move for most TMs; the game's TM move list is then the u16
+     * array that agrees with all of them, and fills in the rest.
+     * Returns (TM moves then HM moves, HM count).
+     */
+    internal fun tmListFromItems(): Pair<List<Int>, Int>? {
+        val (base, stride) = itemTable ?: return null
+        if (stride != ITEM_SIZE) return null
+        // TM and HM items, with their description pointers.
+        val tms = java.util.TreeMap<Int, Long>()
+        val hms = java.util.TreeMap<Int, Long>()
+        for (i in 0 until 2048) {
+            val o = base + i * stride
+            if (o + stride > rom.size) break
+            val len = (0 until 14).firstOrNull { rom.u8(o + it) == Gen3Text.TERMINATOR } ?: continue
+            val name = Gen3Text.decode(rom, o, len).trim()
+            val m = TM_ITEM.matchEntire(name) ?: continue
+            val number = m.groupValues[2].toInt()
+            val desc = rom.u32(o + 20)
+            if (m.groupValues[1].equals("TM", true)) tms.putIfAbsent(number, desc) else hms.putIfAbsent(number, desc)
+        }
+        if (tms.isEmpty()) return null
+        val tmCount = tms.lastKey()
+        val hmCount = if (hms.isEmpty()) 0 else hms.lastKey()
+        fun index(hm: Boolean, n: Int) = if (hm) tmCount + n - 1 else n - 1
+        val size = tmCount + hmCount
+
+        // Where each description pointer appears (outside the item table): one pass over the ROM.
+        val wanted = (tms.values + hms.values).toHashSet()
+        val where = HashMap<Long, MutableList<Int>>()
+        val itemEnd = base + 2048 * stride
+        var p = 0
+        while (p + 4 <= rom.size) {
+            val v = rom.u32(p)
+            if (v in wanted && (p < base || p >= itemEnd)) where.getOrPut(v) { mutableListOf() } += p
+            p += 4
+        }
+        // Move description tables, anchored on HMs every game keeps (Cut, Fly, Surf, Strength).
+        val anchors = listOf(1 to 15, 2 to 19, 3 to 57, 4 to 70)
+        val tables = anchors.flatMap { (hm, move) -> where[hms[hm]].orEmpty().map { it - 4 * (move - 1) } }.distinct()
+        fun resolve(table: Int): Map<Int, Int> = buildMap {
+            for ((n, d) in tms) where[d]?.firstOrNull { it >= table && it < table + 4 * moveCount }?.let { put(index(false, n), (it - table) / 4 + 1) }
+            for ((n, d) in hms) where[d]?.firstOrNull { it >= table && it < table + 4 * moveCount }?.let { put(index(true, n), (it - table) / 4 + 1) }
+        }
+        // Hacks keep the old table next to their own: combine the two that resolve the most.
+        val known = HashMap<Int, Int>()
+        tables.map(::resolve).sortedByDescending { it.size }.take(2).forEach { r -> r.forEach { (k, v) -> known.putIfAbsent(k, v) } }
+        if (known.size < size / 3) return null
+
+        // The game's own list: a u16 array matching every resolved TM.
+        val first = known.minByOrNull { it.key }!!
+        var at = 0
+        while (at + 2 <= rom.size) {
+            if (rom.u16(at) == first.value) {
+                val start = at - 2 * first.key
+                if (start >= 0 && start + 2 * size <= rom.size && known.all { (i, m) -> rom.u16(start + 2 * i) == m }) {
+                    val list = List(size) { rom.u16(start + 2 * it) }
+                    if (list.all { it in 1 until moveCount }) return list to hmCount
+                }
+            }
+            at += 2
+        }
+        // No such array: usable only if every TM was resolved.
+        return if (known.size == size) List(size) { known.getValue(it) } to hmCount else null
+    }
+
+    private fun tmDataByHms(): Triple<List<Int>, Int, List<BitSet>>? {
         val hmCount = itemNames.count { HM_NAME.matches(it.trim()) }.takeIf { it in 1..8 } ?: 8
         val namedTms = itemNames.count { TM_NAME.matches(it.trim()) }
         // Vanilla: 8 bytes per species (50 TMs + 8 HMs); expanded engines: 16 bytes (up to 120 TMs + 8 HMs).
@@ -194,8 +265,8 @@ internal class LearnsetScanner(
         return null
     }
 
-    private fun tmCompat(stride: Int): List<BitSet>? {
-        val bits = stride * 8
+    /** The TM compatibility table, [stride] bytes per species, using at most [bits] bits. */
+    internal fun tmCompat(stride: Int, bits: Int = stride * 8): List<BitSet>? {
         fun entry(t: Int, s: Int) = BitSet.valueOf(rom.copyOfRange(t + stride * s, t + stride * (s + 1)))
         fun similar(a: BitSet, b: BitSet): Boolean {
             val union = (a.clone() as BitSet).apply { or(b) }.cardinality()
@@ -238,6 +309,8 @@ internal class LearnsetScanner(
         val VANILLA_HMS = listOf(15, 19, 57, 70, 148, 249, 127, 291)
         /** TM counts used by vanilla games and common expansions, most specific first. */
         val TM_COUNTS = listOf(50, 58, 92, 95, 100, 110, 112, 120)
+        const val ITEM_SIZE = 44
+        val TM_ITEM = Regex("""(TM|HM)\s*0*(\d{1,3})""", RegexOption.IGNORE_CASE)
         val TM_NAME = Regex("""TM\s*\d{1,3}""", RegexOption.IGNORE_CASE)
         val HM_NAME = Regex("""HM\s*\d{1,2}""", RegexOption.IGNORE_CASE)
     }

@@ -3,6 +3,7 @@ package com.pokeemu.app.ui
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
@@ -57,8 +58,14 @@ fun CheatsScreen(
     platform: Platform,
     onBack: () -> Unit,
     onChanged: () -> Unit = {},
+    /** The evolutions the built-in cheat changes in this game (loads the ROM's data). */
+    evolutionChanges: (suspend () -> List<String>)? = null,
+    /** True while the game is running (built-in cheats then apply from the next start). */
+    inGame: Boolean = false,
 ) {
     var cheats by remember { mutableStateOf(store.load()) }
+    var evolve by remember { mutableStateOf(store.evolveWithoutTrading) }
+    var showChanges by remember { mutableStateOf(false) }
     /** Index being edited; -1 = adding a new one; null = no editor open. */
     var editing by remember { mutableStateOf<Int?>(null) }
     var deleting by remember { mutableStateOf<Int?>(null) }
@@ -86,17 +93,40 @@ fun CheatsScreen(
         },
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
-            if (cheats.isEmpty()) {
-                Text(
-                    (if (platform == Platform.NDS) "Add Action Replay codes for this game." else "Add GameShark, Action Replay or CodeBreaker codes for this game.") +
-                        " Codes that are switched on run while you play. Some games need their \"master code\" added as a cheat too.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.align(Alignment.Center).padding(32.dp),
-                )
-            } else {
-                LazyColumn(contentPadding = PaddingValues(bottom = 96.dp)) {
+            LazyColumn(contentPadding = PaddingValues(bottom = 96.dp)) {
+                item {
+                    SectionTitle("Built-in")
+                    androidx.compose.material3.OutlinedCard(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            androidx.compose.foundation.layout.Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Evolve without trading", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                                Switch(checked = evolve, onCheckedChange = { on -> store.evolveWithoutTrading = on; evolve = on; onChanged() })
+                            }
+                            Text(
+                                "Pokémon that evolve by trading evolve at level 36 instead, or by using the item they'd hold " +
+                                    "(Metal Coat, King's Rock…). Evolutions this game makes impossible (Feebas in FireRed/LeafGreen, " +
+                                    "Magnezone or Leafeon in HeartGold/SoulSilver) work too. Only the running game changes; " +
+                                    "the game file stays as it is.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            if (inGame) Text("Takes effect the next time you start the game.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                            if (evolve && evolutionChanges != null) TextButton(onClick = { showChanges = true }) { Text("Show what changes") }
+                        }
+                    }
+                    SectionTitle("Your cheats")
+                }
+                if (cheats.isEmpty()) item {
+                    Text(
+                        (if (platform == Platform.NDS) "Add Action Replay codes for this game." else "Add GameShark, Action Replay or CodeBreaker codes for this game.") +
+                            " Codes that are switched on run while you play. Some games need their \"master code\" added as a cheat too.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth().padding(24.dp),
+                    )
+                }
+                run {
                     itemsIndexed(cheats) { i, cheat ->
                         ListItem(
                             headlineContent = { Text(cheat.name.ifBlank { "Cheat ${i + 1}" }) },
@@ -120,6 +150,26 @@ fun CheatsScreen(
                 }
             }
         }
+    }
+
+    if (showChanges && evolutionChanges != null) {
+        val changes by androidx.compose.runtime.produceState<List<String>?>(null) { value = runCatching { evolutionChanges() }.getOrDefault(emptyList()) }
+        AlertDialog(
+            onDismissRequest = { showChanges = false },
+            title = { Text("Evolutions in $title") },
+            text = {
+                Column(Modifier.heightIn(max = 420.dp).verticalScroll(androidx.compose.foundation.rememberScrollState())) {
+                    Text(
+                        when {
+                            changes == null -> "Reading the game's evolutions…"
+                            changes!!.isEmpty() -> "This game has no evolutions that need a trade, so nothing changes."
+                            else -> changes!!.joinToString("\n")
+                        },
+                    )
+                }
+            },
+            confirmButton = { TextButton(onClick = { showChanges = false }) { Text("OK") } },
+        )
     }
 
     editing?.let { index ->
@@ -194,3 +244,9 @@ private fun CheatEditor(
         },
     )
 }
+
+@Composable
+private fun SectionTitle(text: String) = Text(
+    text, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary,
+    modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 8.dp),
+)

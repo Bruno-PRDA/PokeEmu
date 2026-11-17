@@ -36,7 +36,7 @@ class NdsFormatException(message: String) : Exception(message)
  */
 class NdsFileSystem(private val rom: RomSource) {
     private val fatOffset: Long
-    private val fileCount: Int
+    val fileCount: Int
     /** "a/0/2/7" -> file id. */
     val paths: Map<String, Int>
 
@@ -103,6 +103,8 @@ class NdsFileSystem(private val rom: RomSource) {
 class LazyNarc private constructor(private val rom: RomSource, private val dataStart: Long, private val ranges: IntArray) {
     val size get() = ranges.size / 2
     operator fun get(i: Int): ByteArray = rom.read(dataStart + ranges[2 * i], ranges[2 * i + 1] - ranges[2 * i])
+    /** Where sub-file [i] starts in the ROM (for patching it in place). */
+    fun romOffset(i: Int): Long = dataStart + ranges[2 * i]
 
     companion object {
         fun open(rom: RomSource, start: Long, length: Int): LazyNarc? {

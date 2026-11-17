@@ -5,7 +5,7 @@ import java.io.DataOutputStream
 
 /** How a Pokémon can learn a move. [via] is the earlier evolution it learns it as, if not itself. */
 data class MoveSource(val kind: Kind, val detail: Int = 0, val via: Int? = null) {
-    enum class Kind { LEVEL, TM, HM, EGG, TUTOR }
+    enum class Kind { LEVEL, TM, HM, EGG, TUTOR, TEACHABLE }
 }
 
 /**
@@ -29,6 +29,8 @@ class Learnsets(
     val tutorCompat: List<java.util.BitSet> = emptyList(),
     /** Per species: what it evolves into. */
     val evolutions: List<List<Int>> = emptyList(),
+    /** True when [tutorMoves] lists every taught move (TMs, HMs and tutors together, as some engines store them). */
+    val tutorIncludesTms: Boolean = false,
 ) {
     enum class Part { LEVEL_UP, TM, EGG, TUTOR, EVOLUTIONS }
 
@@ -36,7 +38,10 @@ class Learnsets(
         if (levelUp.isNotEmpty()) add(Part.LEVEL_UP)
         if (tmMoves.isNotEmpty() && tmCompat.isNotEmpty()) add(Part.TM)
         if (eggMoves.isNotEmpty()) add(Part.EGG)
-        if (tutorMoves.isNotEmpty() && tutorCompat.isNotEmpty()) add(Part.TUTOR)
+        if (tutorMoves.isNotEmpty() && tutorCompat.isNotEmpty()) {
+            add(Part.TUTOR)
+            if (tutorIncludesTms) add(Part.TM)
+        }
         if (evolutions.isNotEmpty()) add(Part.EVOLUTIONS)
     }
 
@@ -77,7 +82,7 @@ class Learnsets(
             tutorCompat.getOrNull(s)?.let { bits ->
                 var i = bits.nextSetBit(0)
                 while (i >= 0 && i < tutorMoves.size) {
-                    out.putIfAbsent(tutorMoves[i], MoveSource(MoveSource.Kind.TUTOR, i + 1, via))
+                    out.putIfAbsent(tutorMoves[i], MoveSource(if (tutorIncludesTms) MoveSource.Kind.TEACHABLE else MoveSource.Kind.TUTOR, i + 1, via))
                     i = bits.nextSetBit(i + 1)
                 }
             }
@@ -90,7 +95,7 @@ class Learnsets(
         return out
     }
 
-    private fun fields() = listOf(levelUp, tmMoves, hmCount, tmCompat, eggMoves, tutorMoves, tutorCompat, evolutions)
+    private fun fields() = listOf(levelUp, tmMoves, hmCount, tmCompat, eggMoves, tutorMoves, tutorCompat, evolutions, tutorIncludesTms)
     override fun equals(other: Any?) = other is Learnsets && other.fields() == fields()
     override fun hashCode() = fields().hashCode()
 
@@ -108,6 +113,7 @@ class Learnsets(
         ints(tutorMoves); bits(tutorCompat)
         d.writeInt(evolutions.size)
         evolutions.forEach(::ints)
+        d.writeBoolean(tutorIncludesTms)
     }
 
     companion object {
@@ -119,7 +125,8 @@ class Learnsets(
             val egg = HashMap<Int, List<Int>>().apply { repeat(d.readInt()) { put(d.readShort().toInt() and 0xFFFF, ints()) } }
             val tutor = ints(); val tutorCompat = bits()
             val evos = List(d.readInt()) { ints() }
-            return Learnsets(levelUp, tm, hm, tmCompat, egg, tutor, tutorCompat, evos)
+            val teachable = d.readBoolean()
+            return Learnsets(levelUp, tm, hm, tmCompat, egg, tutor, tutorCompat, evos, teachable)
         }
 
         /** Parses an egg-move list: (20000 + species) followed by its moves, ending with 0xFFFF. */
@@ -152,6 +159,7 @@ fun MoveSource.label(speciesName: (Int) -> String): String {
         MoveSource.Kind.HM -> "HM%02d".format(detail)
         MoveSource.Kind.EGG -> "Egg move"
         MoveSource.Kind.TUTOR -> "Tutor"
+        MoveSource.Kind.TEACHABLE -> "TM / tutor"
     }
     return via?.let { "$base (as ${speciesName(it)})" } ?: base
 }

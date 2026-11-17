@@ -48,11 +48,16 @@ class Gen4Sprites private constructor(
     override fun item(item: Int): Picture? = synchronized(this) { itemLocked(item) }
 
     private fun itemLocked(item: Int): Picture? {
-        val table = itemTable ?: return null
-        if (8 * item + 8 > table.size) return null
-        val icon = table.u16(8 * item + 2)
-        val pal = table.u16(8 * item + 4)
         val narc = narc(ITEM_ICONS) ?: return null
+        val (icon, pal) = if (itemTable != null) {
+            if (8 * item + 8 > itemTable.size) return null
+            itemTable.u16(8 * item + 2) to itemTable.u16(8 * item + 4)
+        } else {
+            // No table (some engines rebuild the icons): item N's picture and palette follow the
+            // two header files and "no item": files 2N+2 and 2N+3.
+            if (item <= 0) return null
+            (2 * item + 2) to (2 * item + 3)
+        }
         if (icon >= narc.size || pal >= narc.size) return null
         val pixels = ncgrPixels(narc[icon]) ?: return null
         val palette = nclrPalette(narc[pal]) ?: return null

@@ -20,7 +20,9 @@ public:
 
     // Memory-maps the ROM file (large DS ROMs never pass through the Java heap) and
     // loads it; if savePath exists its contents are copied into the core's save RAM.
-    bool loadGame(const std::string& romPath, const std::string& savePath);
+    // [patches]: (offset, bytes) written into the in-memory copy of the ROM only (the file is untouched).
+    bool loadGame(const std::string& romPath, const std::string& savePath,
+                  const std::vector<std::pair<size_t, std::vector<uint8_t>>>& patches = {});
     void start();
     void pause();
     void resume();
@@ -46,6 +48,8 @@ public:
     std::vector<uint8_t> readMemory(unsigned region, size_t offset, size_t length);
     // Reads console memory by bus address (e.g. 0x02000000 = GBA EWRAM).
     std::vector<uint8_t> readBus(uint32_t address, size_t length);
+    // Writes game memory (RAM only: what the core exposes on its bus), between frames.
+    bool writeBus(uint32_t address, const std::vector<uint8_t>& data);
     double fps() const { return core_.avInfo().timing.fps; }
 
 private:

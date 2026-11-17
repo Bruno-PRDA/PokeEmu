@@ -197,7 +197,8 @@ class RomScannerTest {
         val dir = System.getenv("POKEEMU_TEST_ROMS")?.let(::File) ?: return
         for (f in dir.listFiles { x -> x.extension.equals("gba", true) }.orEmpty()) {
             val t = System.currentTimeMillis()
-            val data = RomScanner(f.readBytes()).scan()
+            val rom = f.readBytes()
+            val data = RomScanner(rom).scan()
             println("== ${f.name} (${System.currentTimeMillis() - t} ms)")
             data.report.forEach { println("   $it") }
             println("   #25=${data.speciesName(25)} #277=${data.speciesName(277)} move 1=${data.moveName(1)} item 4=${data.itemName(4)}")
@@ -205,6 +206,11 @@ class RomScannerTest {
                 println("   ${data.speciesName(sp)}: ${b.stats} ${RomData.typeName(b.type1)}/${RomData.typeName(b.type2)} ${data.abilityName(b.ability1)}/${data.abilityName(b.ability2)} gender=${b.genderRatio} growth=${GameRules.GROWTH_NAMES.getOrElse(b.growthRate) { "?" }}")
             }
             println("   moves 85=${data.moveName(85)} pp=${data.basePp(85)}, 354=${data.moveName(354)}, last=${data.moveNames.last()}")
+            Gen3Evolutions.locate(rom, Gen3Evolutions.referenced(rom), data.speciesNames.size.coerceAtLeast(412))?.let { (t, stride) ->
+                val code = String(rom, 0xAC, 3, Charsets.ISO_8859_1)
+                val fixes = Gen3Evolutions.tradeFixes(rom, t, stride, data.speciesNames.size, fixBeauty = code in setOf("BPR", "BPG"), itemName = data::itemName)
+                println("   trade fixes (${fixes.size}): " + fixes.joinToString { "${data.speciesName(it.species)}->${data.speciesName(it.target)} ${it.how}" })
+            }
             data.learnsets?.let { l ->
                 println("   learnsets: ${l.has}")
                 for (name in listOf("CHARIZARD", "PIKACHU", "WEAVILE")) {

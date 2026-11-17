@@ -29,6 +29,8 @@ import com.pokeemu.app.ui.StateSlotsDialog
 import com.pokeemu.core.Button
 import com.pokeemu.core.EmulatorSession
 import com.pokeemu.saves.CheatStore
+import com.pokeemu.app.ui.ChallengesScreen
+import com.pokeemu.saves.ChallengeStore
 import com.pokeemu.saves.GameStorage
 import com.pokeemu.saves.Platform
 import com.pokeemu.app.ui.CheatsScreen
@@ -61,17 +63,23 @@ import java.io.File
 
 class PlayerActivity : ComponentActivity() {
 
-    private enum class Dialog { NONE, MENU, SAVE_STATE, LOAD_STATE, RESUME_PROMPT, CHEATS, EDIT_CONTROLS }
+    private enum class Dialog { NONE, MENU, SAVE_STATE, LOAD_STATE, RESUME_PROMPT, CHEATS, EDIT_CONTROLS, CHALLENGES }
 
     private val storage by lazy { GameStorage(filesDir) }
     private var session: EmulatorSession? = null
     private var gameId: String? = null
+    private var romFile: java.io.File? = null
 
     private var error by mutableStateOf<String?>(null)
     private var ready by mutableStateOf(false)
     private var dialog by mutableStateOf(Dialog.NONE)
     private var fastForward by mutableStateOf(false)
     private var ffSpeed by mutableStateOf(3)
+
+    /** Settings are kept per game (suffix), with the last choice as the default for other games. */
+    private val gameKey get() = "_" + (gameId ?: "")
+    private fun saveSetting(block: android.content.SharedPreferences.Editor.() -> android.content.SharedPreferences.Editor) =
+        prefs.edit().block().apply()
     private val prefs by lazy { getSharedPreferences("player", MODE_PRIVATE) }
     private var dsLayout by mutableStateOf(DsLayout.TOP_BOTTOM)
     private val padStore by lazy { PadCustomStore(this) }
@@ -140,7 +148,11 @@ class PlayerActivity : ComponentActivity() {
                 when (dialog) {
                     Dialog.MENU -> PauseMenu(
                         speed = ffSpeed,
-                        onSpeed = { ffSpeed = it; if (fastForward) session?.setSpeed(it) },
+                        onSpeed = {
+                            ffSpeed = it
+                            if (fastForward) session?.setSpeed(it)
+                            saveSetting { putInt(PREF_FF_SPEED + gameKey, it).putInt(PREF_FF_SPEED, it) }
+                        },
                         onSaveState = { refreshSlots(); showDialog(Dialog.SAVE_STATE) },
                         onLoadState = { refreshSlots(); showDialog(Dialog.LOAD_STATE) },
                         onReset = { session?.reset(); showDialog(Dialog.NONE) },
@@ -149,11 +161,12 @@ class PlayerActivity : ComponentActivity() {
                         onCheats = { showDialog(Dialog.CHEATS) },
                         onEditControls = { showDialog(Dialog.EDIT_CONTROLS) },
                         onSetCover = ::useScreenAsCover,
+                        onChallenges = { showDialog(Dialog.CHALLENGES) },
                         dsLayout = if (isDs) dsLayout else null,
                         onDsLayout = { l ->
                             dsLayout = l
                             l.apply()
-                            prefs.edit().putString(PREF_DS_LAYOUT, l.name).apply()
+                            saveSetting { putString(PREF_DS_LAYOUT + gameKey, l.name).putString(PREF_DS_LAYOUT, l.name) }
                         },
                     )
                     Dialog.SAVE_STATE, Dialog.LOAD_STATE -> StateSlotsDialog(
@@ -179,6 +192,26 @@ class PlayerActivity : ComponentActivity() {
                                     platform = if (isDs) Platform.NDS else Platform.GBA,
                                     onBack = { showDialog(Dialog.MENU) },
                                     onChanged = ::applyCheats,
+                                    inGame = true,
+                                    evolutionChanges = romFile?.let { file ->
+                                        { EvolutionCheat.changes(this@PlayerActivity, file, id, isDs).map { it.second }.distinct() }
+                                    },
+                                )
+                            }
+                        }
+                    }
+                    Dialog.CHALLENGES -> gameId?.let { id ->
+                        // Own window, like Cheats: the game's SurfaceView would draw over this one.
+                        androidx.compose.ui.window.Dialog(
+                            onDismissRequest = { showDialog(Dialog.MENU) },
+                            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+                        ) {
+                            androidx.compose.material3.Surface(Modifier.fillMaxSize()) {
+                                ChallengesScreen(
+                                    title = intent.getStringExtra(EXTRA_NAME)?.substringBeforeLast('.') ?: "Game",
+                                    store = ChallengeStore(storage, id),
+                                    onBack = { showDialog(Dialog.MENU) },
+                                    onChanged = { challengeRunner?.refresh() },
                                 )
                             }
                         }
@@ -197,6 +230,7 @@ class PlayerActivity : ComponentActivity() {
             val local = withContext(Dispatchers.IO) { RomLibrary(this@PlayerActivity).localCopy(uri) }
             val id = local.id
             gameId = id
+            ffSpeed = prefs.getInt(PREF_FF_SPEED + gameKey, prefs.getInt(PREF_FF_SPEED, 3))
             val header = withContext(Dispatchers.IO) {
                 local.file.inputStream().use { input -> ByteArray(NdsHeader.HEADER_SIZE).also { input.read(it) } }
             }
@@ -204,20 +238,36 @@ class PlayerActivity : ComponentActivity() {
             portraitCustom = padStore.get(PadCustomStore.key(isDs, landscape = false))
             landscapeCustom = padStore.get(PadCustomStore.key(isDs, landscape = true))
             if (isDs) {
-                dsLayout = DsLayout.fromName(prefs.getString(PREF_DS_LAYOUT, null))
+                // This game's own choice, else the last one made in any game.
+                dsLayout = DsLayout.fromName(prefs.getString(PREF_DS_LAYOUT + gameKey, null) ?: prefs.getString(PREF_DS_LAYOUT, null))
                 dsLayout.apply() // before load, so the first frame already uses it
             }
             // Daily safety net before the game can touch the save.
             withContext(Dispatchers.IO) { runCatching { SaveManager(storage, id).dailyBackupIfDue() } }
+            romFile = local.file
+            // Built-in cheat: evolution data changed in memory only (the ROM file is untouched).
+            val romPatches = if (CheatStore(storage, id).evolveWithoutTrading) {
+                runCatching { EvolutionCheat.changes(this@PlayerActivity, local.file, id, isDs).map { (fix, _) -> fix.offset to fix.replacement } }
+                    .getOrDefault(emptyList())
+            } else emptyList()
             session = withContext(Dispatchers.IO) {
                 EmulatorSession.open(
+                    romPatches = romPatches,
                     coreLibrary = if (isDs) EmulatorSession.NDS_CORE else EmulatorSession.GBA_CORE,
                     systemDir = File(filesDir, "system"),
                     romFile = local.file,
                     saveFile = storage.saveFile(id),
                 )
             }
+            if (romPatches.isNotEmpty()) {
+                // GBA cartridge ROM is on the bus at 0x08000000: confirm the running game sees the change.
+                val (offset, bytes) = romPatches.first()
+                val seen = if (isDs) null else session?.readBus(0x08000000L + offset, bytes.size)
+                android.util.Log.i("PokeEmu", "Evolve without trading: ${romPatches.size} changes applied in memory" +
+                    if (seen != null) ", visible to the game: ${seen.contentEquals(bytes)}" else "")
+            }
             applyCheats() // before the first frame
+            startChallenges(id)
             session!!.start()
             ready = true
             if (storage.readState(id, GameStorage.AUTO_SLOT) != null) showDialog(Dialog.RESUME_PROMPT)
@@ -280,6 +330,33 @@ class PlayerActivity : ComponentActivity() {
                 sprites = dsSprites
                 liveRam = Gen4LiveReader.RAM_ADDRESS to Gen4LiveReader.RAM_SIZE
                 liveReader = reader::read
+            }
+        }
+    }
+
+    private var challengeRunner: ChallengeRunner? = null
+
+    /**
+     * Challenge modes (shiny odds, Nuzlocke) watch the game's memory a few
+     * times a second while it runs, and may change it; never the ROM or save file.
+     */
+    private fun startChallenges(id: String) {
+        val runner = ChallengeRunner(
+            ChallengeStore(storage, id),
+            data = { romData },
+            write = { offset, bytes -> session?.writeBus(liveRam.first + offset, bytes) == true },
+            notify = { msg -> android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_LONG).show() },
+        )
+        challengeRunner = runner
+        lifecycleScope.launch {
+            while (isActive) {
+                delay(CHALLENGE_REFRESH_MS)
+                if (!runner.active || dialog != Dialog.NONE) continue
+                val s = session ?: continue
+                val reader = liveReader ?: continue
+                val ram = withContext(Dispatchers.IO) { s.readBus(liveRam.first, liveRam.second) } ?: continue
+                val state = withContext(Dispatchers.Default) { reader(ram) } ?: continue
+                runner.onState(state, ram)
             }
         }
     }
@@ -454,6 +531,8 @@ class PlayerActivity : ComponentActivity() {
         private const val GBA_IWRAM = 0x03000000L
         private const val GBA_IWRAM_SIZE = 0x8000
         private const val PREF_DS_LAYOUT = "ds_layout"
+        private const val PREF_FF_SPEED = "ff_speed"
+        private const val CHALLENGE_REFRESH_MS = 300L
         private const val EXTRA_URI = "uri"
         private const val OVERLAY_REFRESH_MS = 500L
         private const val EXTRA_NAME = "name"

@@ -1,5 +1,7 @@
 #include "session.h"
 
+#include <cstring>
+
 #include <android/log.h>
 #include <fcntl.h>
 #include <sys/mman.h>
@@ -55,7 +57,8 @@ static bool readFile(const std::string& path, std::vector<uint8_t>& out) {
     return true;
 }
 
-bool Session::loadGame(const std::string& romPath, const std::string& savePath) {
+bool Session::loadGame(const std::string& romPath, const std::string& savePath,
+                       const std::vector<std::pair<size_t, std::vector<uint8_t>>>& patches) {
     std::lock_guard<std::mutex> lock(coreMutex_);
     int fd = open(romPath.c_str(), O_RDONLY | O_CLOEXEC);
     if (fd < 0) {
@@ -76,6 +79,12 @@ bool Session::loadGame(const std::string& romPath, const std::string& savePath) 
     }
     romMap_ = map;
     romMapSize_ = static_cast<size_t>(st.st_size);
+    // Cheats that change game data: written into the copy-on-write mapping, never the file.
+    for (const auto& p : patches) {
+        if (p.first + p.second.size() <= romMapSize_) {
+            std::memcpy(static_cast<uint8_t*>(romMap_) + p.first, p.second.data(), p.second.size());
+        }
+    }
     if (!core_.loadGame(romMap_, romMapSize_, romPath)) return false;
     savePath_ = savePath;
 
@@ -266,6 +275,15 @@ std::vector<uint8_t> Session::readBus(uint32_t address, size_t length) {
     if (!p) return {};
     length = std::min(length, available);
     return std::vector<uint8_t>(p, p + length);
+}
+
+bool Session::writeBus(uint32_t address, const std::vector<uint8_t>& data) {
+    std::lock_guard<std::mutex> lock(coreMutex_);  // never in the middle of a frame
+    size_t available = 0;
+    uint8_t* p = core_.busAddress(address, &available);
+    if (!p || data.size() > available) return false;
+    std::memcpy(p, data.data(), data.size());
+    return true;
 }
 
 // ---- core callbacks (emulation thread) --------------------------------------

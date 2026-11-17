@@ -54,6 +54,7 @@ class RomScanner(private val rom: ByteArray) {
             speciesCount = species.size.takeIf { it > 0 } ?: 412,
             moveCount = moves.size.takeIf { it > 0 } ?: 355,
             itemNames = items,
+            itemTable = tables[3].table?.takeIf { !it.pointers }?.let { it.base to it.stride },
         ).scan(report).takeIf { it.has.isNotEmpty() }
         val sprites = Gen3Sprites.scan(rom, referenced, species.size.takeIf { it > 0 } ?: 412, report)
         return RomData(

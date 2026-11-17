@@ -169,6 +169,10 @@ class Gen4Test {
             println("   494..500: ${(494..500).map(data::species)} 650..652: ${(650..652).map(data::species)} 900..912: ${(900..912).map(data::species)}")
             assertEquals("bulbasaur", data.species(1).lowercase())
             data.report.forEach { println("   report: $it") }
+            FileRomSource(f).use { rom ->
+                val fixes = Gen4Evolutions.tradeFixes(rom, data.itemNames, data::species)
+                println("   trade fixes (${fixes.size}, hgss=${Gen4Evolutions.isHgss(rom)}): " + fixes.joinToString { "${data.species(it.species)}->${data.species(it.target)} ${it.how}" })
+            }
             data.learnsets?.let { l ->
                 println("   learnsets: ${l.has}")
                 for (name in listOf("Charizard", "Pikachu", "Weavile", "Typhlosion")) {

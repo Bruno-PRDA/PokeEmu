@@ -27,6 +27,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CatchingPokemon
 import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.HideImage
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Delete
@@ -100,6 +101,7 @@ fun LibraryScreen(
     onManageSaves: (RomEntry) -> Unit,
     onEditPokemon: (RomEntry) -> Unit,
     onCheats: (RomEntry) -> Unit,
+    onChallenges: (RomEntry) -> Unit,
     onRemove: (RomEntry) -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
@@ -193,6 +195,7 @@ fun LibraryScreen(
                 onManageSaves = onManageSaves,
                 onEditPokemon = onEditPokemon,
                 onCheats = onCheats,
+                onChallenges = onChallenges,
                 onRemove = { removing = it },
                 hasCustomCover = hasCustomCover(rom),
                 onChangeCover = onChangeCover,
@@ -325,6 +328,7 @@ private fun GameOptions(
     onManageSaves: (RomEntry) -> Unit,
     onEditPokemon: (RomEntry) -> Unit,
     onCheats: (RomEntry) -> Unit,
+    onChallenges: (RomEntry) -> Unit,
     onRemove: (RomEntry) -> Unit,
     hasCustomCover: Boolean,
     onChangeCover: (RomEntry) -> Unit,
@@ -348,6 +352,7 @@ private fun GameOptions(
         Option(Icons.Default.Save, "Save manager") { onAction(onManageSaves) }
         Option(Icons.Default.Edit, "Edit Pokémon") { onAction(onEditPokemon) }
         Option(Icons.Default.Code, "Cheats") { onAction(onCheats) }
+        Option(Icons.Default.EmojiEvents, "Challenges") { onAction(onChallenges) }
         Option(Icons.Default.Image, "Change cover picture") { onAction(onChangeCover) }
         if (hasCustomCover) Option(Icons.Default.HideImage, "Remove cover picture") { onAction(onRemoveCover) }
         Option(Icons.Default.Delete, "Remove game") { onAction(onRemove) }

@@ -7,6 +7,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.key
 import androidx.compose.runtime.getValue
@@ -14,6 +17,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.lifecycleScope
 import com.pokeemu.app.ui.CheatsScreen
+import com.pokeemu.app.ui.ChallengesScreen
+import com.pokeemu.saves.ChallengeStore
 import com.pokeemu.app.ui.EditorScreen
 import com.pokeemu.app.ui.GlobalPcScreen
 import com.pokeemu.app.ui.LibraryScreen
@@ -57,6 +62,7 @@ class MainActivity : ComponentActivity() {
     }
     /** The game whose cheat list is open, with its ROM id (where its cheats are stored). */
     private var cheatsFor by mutableStateOf<Pair<RomEntry, String>?>(null)
+    private var challengesFor by mutableStateOf<Pair<RomEntry, String>?>(null)
 
     /** "+": pick one or more files anywhere (Downloads, …); each is copied into the app. */
     private val pickFiles = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris: List<Uri> ->
@@ -77,12 +83,20 @@ class MainActivity : ComponentActivity() {
                     EditorScreen(rom, onBack = { editing = null })
                     return@PokeEmuTheme
                 }
+                challengesFor?.let { (rom, id) ->
+                    ChallengesScreen(title = rom.name, store = ChallengeStore(GameStorage(filesDir), id), onBack = { challengesFor = null })
+                    return@PokeEmuTheme
+                }
                 cheatsFor?.let { (rom, id) ->
                     CheatsScreen(
                         title = rom.name,
                         store = CheatStore(GameStorage(filesDir), id),
                         platform = rom.header.platform,
                         onBack = { cheatsFor = null },
+                        evolutionChanges = {
+                            val file = withContext(Dispatchers.IO) { library.localCopy(rom.uri).file }
+                            EvolutionCheat.changes(this@MainActivity, file, id, rom.header.platform == com.pokeemu.saves.Platform.NDS).map { it.second }.distinct()
+                        },
                     )
                     return@PokeEmuTheme
                 }
@@ -117,6 +131,12 @@ class MainActivity : ComponentActivity() {
                     onOpen = { rom -> startActivity(PlayerActivity.intent(this, rom.uri, rom.fileName)) },
                     onManageSaves = { managingSaves = it },
                     onEditPokemon = { editing = it },
+                    onChallenges = { rom ->
+                        lifecycleScope.launch {
+                            val id = withContext(Dispatchers.IO) { library.localCopy(rom.uri).id }
+                            challengesFor = rom to id
+                        }
+                    },
                     onCheats = { rom ->
                         lifecycleScope.launch {
                             val id = withContext(Dispatchers.IO) { library.localCopy(rom.uri).id }
