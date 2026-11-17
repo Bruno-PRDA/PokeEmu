@@ -272,6 +272,7 @@ fun PauseMenu(
     onDismiss: () -> Unit,
     onCheats: () -> Unit = {},
     onEditControls: () -> Unit = {},
+    onSetCover: () -> Unit = {},
     /** DS only: current screen layout (null hides the picker). */
     dsLayout: DsLayout? = null,
     onDsLayout: (DsLayout) -> Unit = {},
@@ -301,6 +302,7 @@ fun PauseMenu(
                 }
                 FilledTonalButton(onClick = onCheats, Modifier.fillMaxWidth()) { Text("Cheats") }
                 FilledTonalButton(onClick = onEditControls, Modifier.fillMaxWidth()) { Text("Edit controls") }
+                FilledTonalButton(onClick = onSetCover, Modifier.fillMaxWidth()) { Text("Use this screen as cover") }
                 FilledTonalButton(onClick = onReset, Modifier.fillMaxWidth()) { Text("Reset game") }
                 FilledTonalButton(onClick = onQuit, Modifier.fillMaxWidth()) { Text("Quit to library") }
             }

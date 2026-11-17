@@ -148,6 +148,7 @@ class PlayerActivity : ComponentActivity() {
                         onDismiss = { showDialog(Dialog.NONE) },
                         onCheats = { showDialog(Dialog.CHEATS) },
                         onEditControls = { showDialog(Dialog.EDIT_CONTROLS) },
+                        onSetCover = ::useScreenAsCover,
                         dsLayout = if (isDs) dsLayout else null,
                         onDsLayout = { l ->
                             dsLayout = l
@@ -341,6 +342,25 @@ class PlayerActivity : ComponentActivity() {
     }
 
     // ---- save states --------------------------------------------------------
+
+    /** The current frame becomes the game's picture in the main menu (e.g. its title screen). */
+    private fun useScreenAsCover() {
+        val id = gameId ?: return
+        val frame = session?.snapshot()
+        if (frame == null) {
+            android.widget.Toast.makeText(this, "Couldn't capture the screen", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+        lifecycleScope.launch(Dispatchers.IO) {
+            val file = storage.coverFile(id)
+            val tmp = java.io.File(file.parentFile, "cover.tmp")
+            tmp.outputStream().use { frame.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            if (!tmp.renameTo(file)) { file.delete(); tmp.renameTo(file) }
+            withContext(Dispatchers.Main) {
+                android.widget.Toast.makeText(this@PlayerActivity, "Cover set: this screen now shows in the main menu", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 
     private fun refreshSlots() {
         gameId?.let { stateSlots = storage.listStates(it) }

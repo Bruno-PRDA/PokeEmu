@@ -34,6 +34,9 @@ class GameStorage(private val root: File) {
 
     fun thumbnailFile(romId: String, slot: Int): File = File(statesDir(romId), "$slot.png")
 
+    /** The picture shown for this game in the main menu, chosen by the player. */
+    fun coverFile(romId: String): File = File(gameDir(romId), "cover.png")
+
     /** Slots that currently hold a state, with their last-modified time. */
     fun listStates(romId: String): List<StateSlot> =
         (0..MAX_SLOT).mapNotNull { slot ->

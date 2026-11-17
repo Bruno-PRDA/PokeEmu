@@ -27,6 +27,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CatchingPokemon
 import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.HideImage
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
@@ -84,6 +86,13 @@ fun LibraryScreen(
     /** Non-null while games are being imported: what is happening. */
     busy: String?,
     icon: suspend (RomEntry) -> Bitmap?,
+    /** The game's picture (chosen cover or last-played screen), or null. */
+    cover: suspend (RomEntry) -> Bitmap?,
+    /** Bumped when covers may have changed (back from a game, cover picked...). */
+    coverVersion: Int,
+    hasCustomCover: (RomEntry) -> Boolean,
+    onChangeCover: (RomEntry) -> Unit,
+    onRemoveCover: (RomEntry) -> Unit,
     onAdd: () -> Unit,
     onImportFolder: () -> Unit,
     onGlobalPc: () -> Unit,
@@ -129,7 +138,7 @@ fun LibraryScreen(
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
                 items(roms, key = { it.uri.toString() }) { rom ->
-                    GameTile(rom, icon, onClick = { onOpen(rom) }, onLongClick = { selected = rom })
+                    GameTile(rom, icon, cover, coverVersion, onClick = { onOpen(rom) }, onLongClick = { selected = rom })
                 }
                 item(key = "add") { AddTile(onAdd) }
                 if (roms.isEmpty() && busy == null) {
@@ -185,6 +194,9 @@ fun LibraryScreen(
                 onEditPokemon = onEditPokemon,
                 onCheats = onCheats,
                 onRemove = { removing = it },
+                hasCustomCover = hasCustomCover(rom),
+                onChangeCover = onChangeCover,
+                onRemoveCover = onRemoveCover,
             )
         }
     }
@@ -200,11 +212,48 @@ private fun Logo() {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun GameTile(rom: RomEntry, icon: suspend (RomEntry) -> Bitmap?, onClick: () -> Unit, onLongClick: () -> Unit) {
+private fun GameTile(
+    rom: RomEntry,
+    icon: suspend (RomEntry) -> Bitmap?,
+    cover: suspend (RomEntry) -> Bitmap?,
+    coverVersion: Int,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+) {
+    var picture by remember(rom.uri) { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(rom.uri, coverVersion) { picture = cover(rom) }
     ElevatedCard(
         Modifier.fillMaxWidth().aspectRatio(1f).clip(CardShape).combinedClickable(onClick = onClick, onLongClick = onLongClick),
         shape = CardShape,
     ) {
+        val image = picture
+        if (image != null) {
+            // The game's picture fills the tile; the name sits on a soft shadow at the bottom.
+            Box(Modifier.fillMaxSize()) {
+                Image(
+                    image.asImageBitmap(), null, Modifier.fillMaxSize(),
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                    alignment = Alignment.TopCenter,
+                    // Game screenshots are pixel art: keep them sharp. Photos (large) are smoothed.
+                    filterQuality = if (image.width <= 512) FilterQuality.None else FilterQuality.Medium,
+                )
+                Box(
+                    Modifier.fillMaxSize().background(
+                        androidx.compose.ui.graphics.Brush.verticalGradient(
+                            0.45f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.85f),
+                        ),
+                    ),
+                )
+                PlatformBadge(rom, Modifier.align(Alignment.TopStart).padding(8.dp))
+                Text(
+                    rom.name,
+                    Modifier.align(Alignment.BottomStart).padding(12.dp),
+                    style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold,
+                    color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                )
+            }
+            return@ElevatedCard
+        }
         Column(
             Modifier.fillMaxSize().padding(12.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -221,6 +270,15 @@ private fun GameTile(rom: RomEntry, icon: suspend (RomEntry) -> Bitmap?, onClick
             )
         }
     }
+}
+
+@Composable
+private fun PlatformBadge(rom: RomEntry, modifier: Modifier) {
+    Text(
+        if (rom.header.platform == Platform.NDS) "DS" else "GBA",
+        modifier.background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(6.dp)).padding(horizontal = 6.dp, vertical = 2.dp),
+        color = Color.White, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold,
+    )
 }
 
 @Composable
@@ -268,6 +326,9 @@ private fun GameOptions(
     onEditPokemon: (RomEntry) -> Unit,
     onCheats: (RomEntry) -> Unit,
     onRemove: (RomEntry) -> Unit,
+    hasCustomCover: Boolean,
+    onChangeCover: (RomEntry) -> Unit,
+    onRemoveCover: (RomEntry) -> Unit,
 ) {
     Column(Modifier.padding(bottom = 24.dp)) {
         Row(Modifier.padding(horizontal = 24.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -287,6 +348,8 @@ private fun GameOptions(
         Option(Icons.Default.Save, "Save manager") { onAction(onManageSaves) }
         Option(Icons.Default.Edit, "Edit Pokémon") { onAction(onEditPokemon) }
         Option(Icons.Default.Code, "Cheats") { onAction(onCheats) }
+        Option(Icons.Default.Image, "Change cover picture") { onAction(onChangeCover) }
+        if (hasCustomCover) Option(Icons.Default.HideImage, "Remove cover picture") { onAction(onRemoveCover) }
         Option(Icons.Default.Delete, "Remove game") { onAction(onRemove) }
     }
 }

@@ -17,7 +17,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /** A game in the library: a ROM stored inside the app. [uri] is a file:// URI to that copy. */
-data class RomEntry(val uri: Uri, val fileName: String, val header: RomHeader, val added: Long = 0) {
+data class RomEntry(val uri: Uri, val fileName: String, val header: RomHeader, val added: Long = 0, val id: String = "") {
     val name get() = fileName.substringBeforeLast('.')
 }
 
@@ -83,7 +83,7 @@ class RomLibrary(private val context: Context) {
                 setProperty("id", id)
                 setProperty("added", System.currentTimeMillis().toString())
             }.store(File(dir, META_FILE).outputStream().buffered(), null)
-            ImportResult.Added(RomEntry(Uri.fromFile(rom), name, header, System.currentTimeMillis()))
+            ImportResult.Added(RomEntry(Uri.fromFile(rom), name, header, System.currentTimeMillis(), id))
         } catch (e: Exception) {
             tmp.delete()
             ImportResult.Failed(e.message ?: "Import failed")
@@ -141,7 +141,10 @@ class RomLibrary(private val context: Context) {
         if (!rom.isFile || !meta.isFile) return null
         val props = runCatching { Properties().apply { meta.inputStream().use(::load) } }.getOrNull() ?: return null
         val header = runCatching { rom.inputStream().use(::detect) }.getOrNull() ?: return null
-        return RomEntry(Uri.fromFile(rom), props.getProperty("name", "Game"), header, props.getProperty("added")?.toLongOrNull() ?: 0)
+        return RomEntry(
+            Uri.fromFile(rom), props.getProperty("name", "Game"), header,
+            props.getProperty("added")?.toLongOrNull() ?: 0, props.getProperty("id", ""),
+        )
     }
 
     /** Reads the header and tells DS from GBA by content (DS header CRC, GBA fixed byte). */
@@ -177,6 +180,35 @@ class RomLibrary(private val context: Context) {
         val bannerAt = u32(readAt(0, 0x6C), 0x68)
         if (bannerAt == 0L || bannerAt + 0x240 > f.length()) return null
         DsIcon.decode(readAt(bannerAt, 0x240))
+    }
+
+    /**
+     * The game's picture for the main menu: the cover the player chose, else
+     * the screen where they last stopped playing; null if neither exists.
+     * [version] changes whenever either file does (for refreshing the tile).
+     */
+    fun coverFile(entry: RomEntry): File? {
+        if (entry.id.isEmpty()) return null
+        val storage = com.pokeemu.saves.GameStorage(context.filesDir)
+        return storage.coverFile(entry.id).takeIf { it.isFile }
+            ?: storage.thumbnailFile(entry.id, com.pokeemu.saves.GameStorage.AUTO_SLOT).takeIf { it.isFile }
+    }
+
+    fun hasCustomCover(entry: RomEntry) =
+        entry.id.isNotEmpty() && com.pokeemu.saves.GameStorage(context.filesDir).coverFile(entry.id).isFile
+
+    /** Saves [bitmap] (scaled down to at most 720 px) as the game's cover. */
+    fun setCover(entry: RomEntry, bitmap: Bitmap) {
+        val scale = minOf(1f, 720f / maxOf(bitmap.width, bitmap.height))
+        val scaled = if (scale < 1f) Bitmap.createScaledBitmap(bitmap, (bitmap.width * scale).toInt(), (bitmap.height * scale).toInt(), true) else bitmap
+        val file = com.pokeemu.saves.GameStorage(context.filesDir).coverFile(entry.id)
+        val tmp = File(file.parentFile, "cover.tmp")
+        tmp.outputStream().use { scaled.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        if (!tmp.renameTo(file)) { file.delete(); tmp.renameTo(file) }
+    }
+
+    fun removeCover(entry: RomEntry) {
+        if (entry.id.isNotEmpty()) com.pokeemu.saves.GameStorage(context.filesDir).coverFile(entry.id).delete()
     }
 
     /** A ROM ready to play: a local file (mmap-able by native code) and its id. */

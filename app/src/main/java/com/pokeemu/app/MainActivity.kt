@@ -34,6 +34,27 @@ class MainActivity : ComponentActivity() {
     private var managingSaves by mutableStateOf<RomEntry?>(null)
     private var editing by mutableStateOf<RomEntry?>(null)
     private var globalPc by mutableStateOf(false)
+    /** Bumped to make game tiles reload their pictures. */
+    private var coverVersion by mutableStateOf(0)
+    private var coverFor: RomEntry? = null
+
+    /** "Change cover picture": any image on the phone (box art, a screenshot...). */
+    private val pickCover = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
+        val rom = coverFor ?: return@registerForActivityResult
+        coverFor = null
+        if (uri == null) return@registerForActivityResult
+        lifecycleScope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                runCatching {
+                    val bitmap = contentResolver.openInputStream(uri)!!.use { android.graphics.BitmapFactory.decodeStream(it) }
+                        ?: error("not an image")
+                    library.setCover(rom, bitmap)
+                }.isSuccess
+            }
+            if (!ok) Toast.makeText(this@MainActivity, "That file isn't a picture", Toast.LENGTH_SHORT).show()
+            coverVersion++
+        }
+    }
     /** The game whose cheat list is open, with its ROM id (where its cheats are stored). */
     private var cheatsFor by mutableStateOf<Pair<RomEntry, String>?>(null)
 
@@ -81,6 +102,15 @@ class MainActivity : ComponentActivity() {
                     roms = roms,
                     busy = busy,
                     icon = library::icon,
+                    cover = { rom ->
+                        withContext(Dispatchers.IO) { library.coverFile(rom)?.let { android.graphics.BitmapFactory.decodeFile(it.path) } }
+                    },
+                    coverVersion = coverVersion,
+                    hasCustomCover = library::hasCustomCover,
+                    onChangeCover = { rom -> coverFor = rom; pickCover.launch("image/*") },
+                    onRemoveCover = { rom ->
+                        lifecycleScope.launch { withContext(Dispatchers.IO) { library.removeCover(rom) }; coverVersion++ }
+                    },
                     onAdd = { pickFiles.launch(arrayOf("*/*")) },
                     onImportFolder = { pickFolder.launch(null) },
                     onGlobalPc = { globalPc = true },
@@ -102,6 +132,11 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        coverVersion++ // back from a game: its last-played screen or new cover may have changed
     }
 
     private suspend fun start() {
