@@ -27,6 +27,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CatchingPokemon
 import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.DriveFileRenameOutline
 import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.HideImage
 import androidx.compose.material.icons.filled.Image
@@ -103,7 +104,9 @@ fun LibraryScreen(
     onCheats: (RomEntry) -> Unit,
     onChallenges: (RomEntry) -> Unit,
     onRemove: (RomEntry) -> Unit,
+    onRename: (RomEntry, String) -> Unit = { _, _ -> },
 ) {
+    var renaming by remember { mutableStateOf<RomEntry?>(null) }
     var menuOpen by remember { mutableStateOf(false) }
     var selected by remember { mutableStateOf<RomEntry?>(null) }
     var removing by remember { mutableStateOf<RomEntry?>(null) }
@@ -183,6 +186,24 @@ fun LibraryScreen(
         )
     }
 
+    renaming?.let { rom ->
+        var text by remember(rom) { mutableStateOf(rom.name) }
+        AlertDialog(
+            onDismissRequest = { renaming = null },
+            title = { Text("Rename") },
+            text = {
+                androidx.compose.material3.OutlinedTextField(
+                    value = text, onValueChange = { text = it.take(60) }, singleLine = true,
+                    label = { Text("Name in the main menu") },
+                )
+            },
+            confirmButton = {
+                TextButton(enabled = text.isNotBlank(), onClick = { renaming = null; onRename(rom, text) }) { Text("Rename") }
+            },
+            dismissButton = { TextButton(onClick = { renaming = null }) { Text("Cancel") } },
+        )
+    }
+
     selected?.let { rom ->
         ModalBottomSheet(onDismissRequest = { selected = null }) {
             GameOptions(
@@ -197,6 +218,7 @@ fun LibraryScreen(
                 onCheats = onCheats,
                 onChallenges = onChallenges,
                 onRemove = { removing = it },
+                onRename = { renaming = it },
                 hasCustomCover = hasCustomCover(rom),
                 onChangeCover = onChangeCover,
                 onRemoveCover = onRemoveCover,
@@ -330,6 +352,7 @@ private fun GameOptions(
     onCheats: (RomEntry) -> Unit,
     onChallenges: (RomEntry) -> Unit,
     onRemove: (RomEntry) -> Unit,
+    onRename: (RomEntry) -> Unit,
     hasCustomCover: Boolean,
     onChangeCover: (RomEntry) -> Unit,
     onRemoveCover: (RomEntry) -> Unit,
@@ -354,6 +377,7 @@ private fun GameOptions(
         if (rom.header.pokemonTools) Option(Icons.Default.Edit, "Edit Pokémon") { onAction(onEditPokemon) }
         Option(Icons.Default.Code, "Cheats") { onAction(onCheats) }
         if (rom.header.pokemonTools) Option(Icons.Default.EmojiEvents, "Challenges") { onAction(onChallenges) }
+        Option(Icons.Default.DriveFileRenameOutline, "Rename") { onAction(onRename) }
         Option(Icons.Default.Image, "Change cover picture") { onAction(onChangeCover) }
         if (hasCustomCover) Option(Icons.Default.HideImage, "Remove cover picture") { onAction(onRemoveCover) }
         Option(Icons.Default.Delete, "Remove game") { onAction(onRemove) }

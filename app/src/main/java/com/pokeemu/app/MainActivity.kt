@@ -143,6 +143,12 @@ class MainActivity : ComponentActivity() {
                             cheatsFor = rom to id
                         }
                     },
+                    onRename = { rom, name ->
+                        lifecycleScope.launch {
+                            library.rename(rom, name)
+                            roms = library.games()
+                        }
+                    },
                     onRemove = { rom ->
                         lifecycleScope.launch {
                             library.remove(rom)

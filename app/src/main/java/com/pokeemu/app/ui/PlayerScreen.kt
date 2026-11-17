@@ -38,6 +38,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material.icons.filled.QueryStats
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -138,6 +139,9 @@ fun PlayerScreen(
     editing: Boolean = false,
     onCustom: (landscape: Boolean, PadCustom) -> Unit = { _, _ -> },
     onEditDone: () -> Unit = {},
+    /** "Top + buttons" layout: shows the touch screen in the top screen's place, or back. Null hides the button. */
+    onPeekTouch: (() -> Unit)? = null,
+    peekingTouch: Boolean = false,
 ) {
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val toolButtons = @Composable {
@@ -147,6 +151,9 @@ fun PlayerScreen(
         if (onToggleOverlay != null) IconButton(onClick = onToggleOverlay, colors = IconButtonDefaults.iconButtonColors(
             contentColor = if (overlayOpen) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.6f),
         )) { Icon(Icons.Default.QueryStats, "Battle info") }
+        if (onPeekTouch != null) IconButton(onClick = onPeekTouch, colors = IconButtonDefaults.iconButtonColors(
+            contentColor = if (peekingTouch) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.6f),
+        )) { Icon(Icons.Default.TouchApp, if (peekingTouch) "Back to the top screen" else "Show the touch screen") }
         IconButton(onClick = onOpenMenu) { Icon(Icons.Default.Menu, "Menu", tint = Color.White.copy(alpha = 0.6f)) }
     }
 

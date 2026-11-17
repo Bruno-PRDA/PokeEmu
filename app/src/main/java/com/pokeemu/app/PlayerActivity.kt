@@ -82,6 +82,9 @@ class PlayerActivity : ComponentActivity() {
         prefs.edit().block().apply()
     private val prefs by lazy { getSharedPreferences("player", MODE_PRIVATE) }
     private var dsLayout by mutableStateOf(DsLayout.TOP_BOTTOM)
+    /** In "Top + buttons": the touch screen is shown in the top screen's place for now. */
+    private var peekingTouch by mutableStateOf(false)
+    private val shownLayout get() = if (peekingTouch && dsLayout == DsLayout.TOP_ONLY) DsLayout.TOUCH_ONLY else dsLayout
     private val padStore by lazy { PadCustomStore(this) }
     /** The user's control layouts for this system (GBA or DS), loaded once the game type is known. */
     private var portraitCustom by mutableStateOf(PadCustom())
@@ -132,7 +135,7 @@ class PlayerActivity : ComponentActivity() {
                     overlayOpen = overlayOpen,
                     onToggleOverlay = if (pokemonTools) ::toggleOverlay else null,
                     overlay = { mod -> OverlayPanel(liveState, romData, mod, sprites) },
-                    aspect = if (isDs) dsLayout.aspect else 3f / 2f,
+                    aspect = if (isDs) shownLayout.aspect else 3f / 2f,
                     portraitPad = if (isDs) PadLayouts.dsPortrait else PadLayouts.portrait,
                     landscapePad = if (isDs) PadLayouts.dsLandscape else PadLayouts.landscape,
                     onTouch = if (isDs) { x, y, down -> session?.setTouch(x, y, down) } else null,
@@ -144,6 +147,8 @@ class PlayerActivity : ComponentActivity() {
                         padStore.set(PadCustomStore.key(isDs, landscape), custom)
                     },
                     onEditDone = { showDialog(Dialog.NONE) },
+                    onPeekTouch = if (isDs && dsLayout == DsLayout.TOP_ONLY) ({ peekingTouch = !peekingTouch; shownLayout.apply() }) else null,
+                    peekingTouch = peekingTouch,
                 )
                 when (dialog) {
                     Dialog.MENU -> PauseMenu(
@@ -165,6 +170,7 @@ class PlayerActivity : ComponentActivity() {
                         dsLayout = if (isDs) dsLayout else null,
                         onDsLayout = { l ->
                             dsLayout = l
+                            peekingTouch = false
                             l.apply()
                             saveSetting { putString(PREF_DS_LAYOUT + gameKey, l.name).putString(PREF_DS_LAYOUT, l.name) }
                         },

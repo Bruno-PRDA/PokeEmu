@@ -12,7 +12,8 @@ enum class DsLayout(val label: String, private val coreValue: String, val aspect
     SIDE_BY_SIDE("Side by side", "left-right", 512f / 192f),
     // Large top screen, both screens small on the right (2:1 ratio): 768 x 384.
     HYBRID("Big top screen", "hybrid-top", 768f / 384f),
-    TOP_ONLY("Top only", "top", 256f / 192f),
+    /** Top screen above, buttons below; the touch screen can be shown in its place when needed. */
+    TOP_ONLY("Top + buttons", "top", 256f / 192f),
     TOUCH_ONLY("Touch only", "bottom", 256f / 192f);
 
     /** Sends the layout to the core; takes effect on the next frame (or at load). */
@@ -22,6 +23,8 @@ enum class DsLayout(val label: String, private val coreValue: String, val aspect
         EmulatorSession.setCoreOption("melonds_screen_gap", "0")
         EmulatorSession.setCoreOption("melonds_hybrid_ratio", "2")
         EmulatorSession.setCoreOption("melonds_hybrid_small_screen", "both")
+        // melonDS draws a cursor where the screen was touched: the black dot players saw.
+        EmulatorSession.setCoreOption("melonds_show_cursor", "disabled")
     }
 
     companion object {

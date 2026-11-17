@@ -108,6 +108,18 @@ class RomLibrary(private val context: Context) {
         }
     }
 
+    /** Changes the name shown in the main menu (the ROM, its id and its saves stay as they are). */
+    suspend fun rename(entry: RomEntry, newName: String) = withContext(Dispatchers.IO) {
+        val name = newName.trim().take(60).ifEmpty { return@withContext }
+        val rom = entry.uri.path?.let(::File) ?: return@withContext
+        val meta = File(rom.parentFile, META_FILE)
+        if (!meta.isFile) return@withContext
+        val props = Properties().apply { meta.inputStream().use(::load) }
+        // Kept as a file name: the menu shows it without the extension.
+        props.setProperty("name", "$name.${entry.fileName.substringAfterLast('.', entry.header.platform.extensions.first())}")
+        meta.outputStream().buffered().use { props.store(it, null) }
+    }
+
     /** Deletes the game's ROM from the app. Its saves and save states are kept. */
     suspend fun remove(entry: RomEntry) = withContext(Dispatchers.IO) {
         val rom = entry.uri.path?.let(::File) ?: return@withContext
