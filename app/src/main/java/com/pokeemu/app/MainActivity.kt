@@ -1,8 +1,8 @@
 package com.pokeemu.app
 
-import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -14,38 +14,43 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.lifecycleScope
 import com.pokeemu.app.ui.EditorScreen
+import com.pokeemu.app.ui.GlobalPcScreen
 import com.pokeemu.app.ui.LibraryScreen
 import com.pokeemu.app.ui.PokeEmuTheme
 import com.pokeemu.app.ui.SaveManagerScreen
+import java.io.File
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
     private lateinit var library: RomLibrary
     private var roms by mutableStateOf<List<RomEntry>>(emptyList())
-    private var loading by mutableStateOf(false)
-    private var hasFolder by mutableStateOf(false)
+    private var busy by mutableStateOf<String?>(null)
     private var managingSaves by mutableStateOf<RomEntry?>(null)
     private var editing by mutableStateOf<RomEntry?>(null)
+    private var globalPc by mutableStateOf(false)
+
+    /** "+": pick one or more files anywhere (Downloads, …); each is copied into the app. */
+    private val pickFiles = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris: List<Uri> ->
+        if (uris.isNotEmpty()) importFiles(uris)
+    }
 
     private val pickFolder = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
-        if (uri != null) {
-            contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            library.folder = uri
-            hasFolder = true
-            rescan()
-        }
+        if (uri != null) importFolder(uri)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         library = RomLibrary(this)
-        hasFolder = library.folder != null
         setContent {
             PokeEmuTheme {
-                LaunchedEffect(Unit) { if (hasFolder) rescan() }
+                LaunchedEffect(Unit) { start() }
                 editing?.let { rom ->
                     EditorScreen(rom, onBack = { editing = null })
+                    return@PokeEmuTheme
+                }
+                if (globalPc) {
+                    GlobalPcScreen(roms, onBack = { globalPc = false })
                     return@PokeEmuTheme
                 }
                 managingSaves?.let { rom ->
@@ -58,22 +63,73 @@ class MainActivity : ComponentActivity() {
                 }
                 LibraryScreen(
                     roms = roms,
-                    hasFolder = hasFolder,
-                    loading = loading,
-                    onPickFolder = { pickFolder.launch(library.folder) },
-                    onRefresh = ::rescan,
+                    busy = busy,
+                    icon = library::icon,
+                    onAdd = { pickFiles.launch(arrayOf("*/*")) },
+                    onImportFolder = { pickFolder.launch(null) },
+                    onGlobalPc = { globalPc = true },
                     onOpen = { rom -> startActivity(PlayerActivity.intent(this, rom.uri, rom.fileName)) },
                     onManageSaves = { managingSaves = it },
+                    onEditPokemon = { editing = it },
+                    onRemove = { rom ->
+                        lifecycleScope.launch {
+                            library.remove(rom)
+                            roms = library.games()
+                        }
+                    },
                 )
             }
         }
     }
 
-    private fun rescan() {
-        lifecycleScope.launch {
-            loading = true
-            roms = library.scan()
-            loading = false
+    private suspend fun start() {
+        roms = library.games()
+        // Older versions played games from a folder in place: bring those games into the app once.
+        library.legacyFolder?.let { folder ->
+            runImport("Moving your games into the app…") { library.importFolder(folder) { busy = "Moving $it into the app…" } }
+            library.legacyFolder = null
+            File(filesDir, "rom-cache").deleteRecursively()
+        }
+    }
+
+    private fun importFiles(uris: List<Uri>) = lifecycleScope.launch {
+        var added = 0
+        val problems = mutableListOf<String>()
+        runImport("Adding game…") {
+            for ((i, uri) in uris.withIndex()) {
+                busy = if (uris.size > 1) "Adding game ${i + 1} of ${uris.size}…" else "Adding game…"
+                when (val r = library.import(uri)) {
+                    is RomLibrary.ImportResult.Added -> added++
+                    is RomLibrary.ImportResult.AlreadyThere -> problems += "${r.entry.name} is already in your games"
+                    RomLibrary.ImportResult.NotARom -> problems += "That file isn't a GBA or DS game"
+                    is RomLibrary.ImportResult.Failed -> problems += r.message
+                }
+            }
+            added
+        }
+        val message = buildList {
+            if (added > 0) add(if (added == 1) "Game added. You can delete the downloaded file now." else "$added games added.")
+            addAll(problems.distinct())
+        }.joinToString("\n")
+        if (message.isNotEmpty()) Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show()
+    }
+
+    private fun importFolder(tree: Uri) = lifecycleScope.launch {
+        val added = runImport("Looking for games…") { library.importFolder(tree) { busy = "Adding $it…" } }
+        Toast.makeText(
+            this@MainActivity,
+            when (added) { 0 -> "No new games found in that folder."; 1 -> "1 game added."; else -> "$added games added." },
+            Toast.LENGTH_LONG,
+        ).show()
+    }
+
+    private suspend fun runImport(label: String, block: suspend () -> Int): Int {
+        busy = label
+        return try {
+            block()
+        } finally {
+            busy = null
+            roms = library.games()
         }
     }
 }

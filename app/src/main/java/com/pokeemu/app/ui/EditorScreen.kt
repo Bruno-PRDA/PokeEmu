@@ -52,19 +52,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.pokeemu.app.RomDataStore
+import com.pokeemu.app.OpenSave
 import com.pokeemu.app.RomEntry
-import com.pokeemu.app.RomLibrary
-import com.pokeemu.gen3.Gen3Save
 import com.pokeemu.core.Mon
 import com.pokeemu.core.MonEditor
-import com.pokeemu.gen3.SaveEditor
-import com.pokeemu.gen4.Gen4Save
-import com.pokeemu.gen4.Gen4SaveEditor
-import com.pokeemu.saves.Platform
-import com.pokeemu.saves.GameStorage
 import com.pokeemu.saves.SaveManager
-import com.pokeemu.saves.romId
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -95,27 +87,8 @@ fun EditorScreen(rom: RomEntry, onBack: () -> Unit) {
     }
 
     suspend fun load() {
-        val (e, m) = withContext(Dispatchers.IO) {
-            val local = RomLibrary(context).localCopy(rom.uri)
-            val id = local.id
-            val storage = GameStorage(context.filesDir)
-            val store = RomDataStore(storage)
-            val mgr = SaveManager(storage, id)
-            if (rom.header.platform == Platform.NDS) {
-                withContext(Dispatchers.Main) { status = "Reading game data from the ROM…" }
-                val data = store.gen4(id, local.file) ?: throw IllegalStateException("couldn't read game data from this ROM")
-                val save = Gen4Save.parse(mgr.saveFile.readBytes())
-                (Gen4SaveEditor(save, data) as MonEditor) to mgr
-            } else {
-                val data = store.cached(id) ?: run {
-                    withContext(Dispatchers.Main) { status = "Reading game data from the ROM (first time only)…" }
-                    store.scanAndCache(id, local.file.readBytes()) // GBA ROMs are at most 32 MB
-                }
-                val save = Gen3Save.parse(mgr.saveFile.readBytes())
-                (SaveEditor(save, data) as MonEditor) to mgr
-            }
-        }
-        editor = e; manager = m; status = null
+        val opened = OpenSave.open(context, rom) { status = it }
+        editor = opened.editor; manager = opened.manager; status = null
     }
 
     LaunchedEffect(rom.uri) {
