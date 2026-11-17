@@ -26,6 +26,8 @@ data class StoredMon(
     val fromGame: String,
     val fromRomId: String,
     val storedAt: Long,
+    /** The game file it first came from (see [OriginLedger]); null if not known. */
+    val originGame: String? = null,
 ) {
     override fun equals(other: Any?) = other is StoredMon && other.id == id
     override fun hashCode() = id.hashCode()
@@ -33,6 +35,8 @@ data class StoredMon(
 
 /** The global PC: Pokémon stored outside any game, one pair of files each in [dir]. */
 class GlobalPc(private val dir: File) {
+    /** Where each Pokémon first came from; kept next to the PC. */
+    val origins = OriginLedger(File(dir, "origins.txt"))
 
     fun list(): List<StoredMon> =
         dir.listFiles { f -> f.extension == "properties" }.orEmpty().mapNotNull(::read).sortedBy { it.storedAt }
@@ -40,6 +44,9 @@ class GlobalPc(private val dir: File) {
     /** Stores [mon] from [editor]'s game. Returns the stored entry. */
     fun deposit(editor: MonEditor, mon: Mon, gameName: String, romId: String): StoredMon {
         requireCanDeposit(mon)
+        // A GBA-born Pokémon in a DS game wasn't caught there: don't record that game as its origin.
+        val arrivedFromGba = editor.fileExtension == "pk4" && mon.originVersion in 1..5
+        val origin = if (arrivedFromGba) origins.get(mon) else origins.record(mon, gameName)
         val data = editor.data
         val stored = StoredMon(
             id = UUID.randomUUID().toString(),
@@ -54,6 +61,7 @@ class GlobalPc(private val dir: File) {
             fromGame = gameName,
             fromRomId = romId,
             storedAt = System.currentTimeMillis(),
+            originGame = origin,
         )
         write(stored)
         return stored
@@ -83,6 +91,7 @@ class GlobalPc(private val dir: File) {
         p["fromGame"] = s.fromGame
         p["fromRomId"] = s.fromRomId
         p["storedAt"] = s.storedAt.toString()
+        s.originGame?.let { p["originGame"] = it }
         // Written last: an entry only exists once both files are complete.
         val tmp = File(dir, "${s.id}.properties.tmp")
         tmp.outputStream().use { p.store(it, null) }
@@ -105,6 +114,7 @@ class GlobalPc(private val dir: File) {
             fromGame = p.getProperty("fromGame", ""),
             fromRomId = p.getProperty("fromRomId", ""),
             storedAt = p.getProperty("storedAt")?.toLongOrNull() ?: meta.lastModified(),
+            originGame = p.getProperty("originGame"),
         )
     }.getOrNull()
 }
@@ -118,21 +128,33 @@ object Transfer {
     /** A ready-to-insert Pokémon, plus notes on anything that had to change. */
     class Result(val mon: Mon, val notes: List<String>)
 
+    /**
+     * Converts a single-Pokémon file to another format (e.g. "pk3" to "pk4").
+     * [finish] runs after species/moves/item are matched by name, for what
+     * depends on the target game (ability, gender...); it returns notes.
+     */
+    class Converter(val convert: (ByteArray) -> ByteArray, val finish: (Mon, MonEditor, StoredMon) -> List<String>)
+
+    /** Registered by the format modules (see Gen3To4); keyed by (from, to) extension. */
+    val converters = java.util.concurrent.ConcurrentHashMap<Pair<String, String>, Converter>()
+
     /** Throws IllegalArgumentException (with a message for the user) if it can't go into this game. */
     fun adapt(stored: StoredMon, editor: MonEditor, targetRomId: String): Result {
-        require(stored.format == editor.fileExtension) {
+        val converter = if (stored.format == editor.fileExtension) null else converters[stored.format to editor.fileExtension]
+        require(stored.format == editor.fileExtension || converter != null) {
             val from = if (stored.format == "pk3") "GBA" else "DS"
             val to = if (editor.fileExtension == "pk3") "GBA" else "DS"
-            "${stored.speciesName} is from a $from game; it can only go into $from games ($to games aren't supported yet)"
+            "${stored.speciesName} is from a $from game and can't go into a $to game"
         }
-        val mon = editor.parseImport(stored.bytes)
-        if (stored.fromRomId == targetRomId) return Result(mon, emptyList())
+        val mon = editor.parseImport(converter?.convert?.invoke(stored.bytes) ?: stored.bytes)
+        if (converter == null && stored.fromRomId == targetRomId) return Result(mon, emptyList())
 
         val data = editor.data
         val notes = mutableListOf<String>()
 
         // Species: must exist in the target game under the same name.
         val species = find(data.speciesNames, stored.speciesName)
+        require(species != null || converter == null) { "${stored.speciesName} isn't in this game" }
         if (species == null) {
             require(data.speciesNames.isEmpty() || isNumbered(stored.speciesName)) {
                 "${stored.speciesName} isn't in this game"
@@ -166,6 +188,15 @@ object Transfer {
             val id = find(data.itemNames, item)
             if (id == null) notes += "Left its $item behind (not in this game)"
             mon.heldItem = id ?: 0
+        } else if (item != null && converter != null) {
+            // Another generation numbers items differently: without names, don't guess.
+            notes += "Left its $item behind (this game's item names weren't found)"
+            mon.heldItem = 0
+        }
+
+        if (converter != null) {
+            notes += converter.finish(mon, editor, stored)
+            return Result(mon, notes)
         }
 
         // Ability: keep the same slot if the species has it, else its first ability.

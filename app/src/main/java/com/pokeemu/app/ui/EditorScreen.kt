@@ -78,6 +78,7 @@ fun EditorScreen(rom: RomEntry, onBack: () -> Unit) {
     var confirmDiscard by remember { mutableStateOf(false) }
     var showReport by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
+    val origins = remember { Origins(context) }
 
     fun toast(msg: String) = Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
     fun act(block: (MonEditor) -> Unit) {
@@ -148,6 +149,7 @@ fun EditorScreen(rom: RomEntry, onBack: () -> Unit) {
                 onCancel = { detail = null },
                 onDelete = { act { it.delete(detailSlot) }; detail = null },
                 onExport = { exportSlot = detailSlot; exportLauncher.launch("${e.data.speciesName(pk.species)}.${e.fileExtension}") },
+                origin = origins.describe(pk),
             )
             return
         }
@@ -197,7 +199,7 @@ fun EditorScreen(rom: RomEntry, onBack: () -> Unit) {
             Text("Party", style = MaterialTheme.typography.titleMedium)
             Grid(columns = 3, cells = 6) { i ->
                 val slot = Slot.Party(i)
-                Cell(e, e.partyMembers.getOrNull(i), selected = moving == slot, onClick = { onCell(slot) }, onLongClick = { moving = slot })
+                Cell(e, e.partyMembers.getOrNull(i), selected = moving == slot, foreign = e.partyMembers.getOrNull(i)?.let { origins.isForeign(it, rom.name, e.fileExtension) } == true, onClick = { onCell(slot) }, onLongClick = { moving = slot })
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = { box = (box + e.boxCount - 1) % e.boxCount }) { Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Previous box") }
@@ -207,7 +209,7 @@ fun EditorScreen(rom: RomEntry, onBack: () -> Unit) {
             val contents = e.box(box)
             Grid(columns = 6, cells = e.boxSlots) { i ->
                 val slot = Slot.Box(box, i)
-                Cell(e, contents[i], selected = moving == slot, compact = true, onClick = { onCell(slot) }, onLongClick = { moving = slot })
+                Cell(e, contents[i], selected = moving == slot, compact = true, foreign = contents[i]?.let { origins.isForeign(it, rom.name, e.fileExtension) } == true, onClick = { onCell(slot) }, onLongClick = { moving = slot })
             }
             Text("Tap to edit · long-press to move · tap an empty slot to import a .${e.fileExtension}", style = MaterialTheme.typography.bodySmall)
         }
@@ -245,7 +247,7 @@ private fun Grid(columns: Int, cells: Int, content: @Composable (Int) -> Unit) {
 @OptIn(ExperimentalFoundationApi::class)
 @NonSkippableComposable // warnings depend on SaveEditor state
 @Composable
-private fun Cell(e: MonEditor, pk: Mon?, selected: Boolean, compact: Boolean = false, onClick: () -> Unit, onLongClick: () -> Unit) {
+private fun Cell(e: MonEditor, pk: Mon?, selected: Boolean, compact: Boolean = false, foreign: Boolean = false, onClick: () -> Unit, onLongClick: () -> Unit) {
     val warn = pk != null && e.warnings(pk).isNotEmpty()
     Card(
         modifier = Modifier.fillMaxWidth().aspectRatio(if (compact) 1f else 2.2f)
@@ -260,6 +262,7 @@ private fun Cell(e: MonEditor, pk: Mon?, selected: Boolean, compact: Boolean = f
         ),
     ) {
         Box(Modifier.fillMaxSize().padding(4.dp), contentAlignment = Alignment.Center) {
+            if (foreign) ForeignDot(Modifier.align(Alignment.TopEnd))
             if (pk != null) {
                 val name = if (pk.isEgg) "Egg" else e.data.speciesName(pk.species)
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {

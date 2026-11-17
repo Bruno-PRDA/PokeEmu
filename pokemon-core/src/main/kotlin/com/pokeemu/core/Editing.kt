@@ -56,6 +56,8 @@ interface Mon {
     val trainerId: Int
     val secretId: Int
     val otName: String
+    /** Game of origin id (see GameVersions); 0 if unknown. */
+    val originVersion: Int get() = 0
     val checksumValid: Boolean
     val moves: List<Int>
     fun move(i: Int): Int

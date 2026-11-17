@@ -131,6 +131,13 @@ class Pk3(raw: ByteArray, val encoding: Pk3Encoding = Pk3Encoding.STANDARD) : Mo
     // ---- Misc (substructure 3) ---------------------------------------------------------
 
     val metLocation: Int get() = data.u8(37)
+    /** Origins: met level (bits 0-6), game (7-10), ball (11-14), OT is female (15). */
+    val origins: Int get() = data.u16(38)
+    val metLevel: Int get() = origins and 0x7F
+    val originGame: Int get() = (origins shr 7) and 0xF
+    override val originVersion: Int get() = originGame
+    val ball: Int get() = (origins shr 11) and 0xF
+    val otFemale: Boolean get() = (origins shr 15) and 1 == 1
     private var ivWord: Long
         get() = data.u32(40)
         set(v) = data.put32(40, v)

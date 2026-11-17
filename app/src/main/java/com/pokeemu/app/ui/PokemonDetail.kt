@@ -65,6 +65,8 @@ fun PokemonDetail(
     onCancel: () -> Unit,
     onDelete: () -> Unit,
     onExport: () -> Unit,
+    /** Where it comes from, e.g. "Odyssey v4.1 (FireRed version)". */
+    origin: String? = null,
 ) {
     val pk = remember(original) { original.copy() }
     var tick by remember { mutableIntStateOf(0) } // bump after mutating pk to recompose
@@ -109,7 +111,7 @@ fun PokemonDetail(
                 }
                 tick.let { } // re-run this block (and the non-skippable tabs) after every edit
                 when (tab) {
-                    0 -> SummaryTab(pk, editor, rom, ::edit)
+                    0 -> SummaryTab(pk, editor, rom, origin, ::edit)
                     1 -> MovesTab(pk, editor, rom, ::edit)
                     else -> StatsTab(pk, editor, ::edit)
                 }
@@ -124,7 +126,7 @@ fun PokemonDetail(
 
 @NonSkippableComposable // reads `pk`, which is edited in place
 @Composable
-private fun SummaryTab(pk: Mon, editor: MonEditor, rom: GameData, edit: (() -> Unit) -> Unit) {
+private fun SummaryTab(pk: Mon, editor: MonEditor, rom: GameData, origin: String?, edit: (() -> Unit) -> Unit) {
     var picker by remember { mutableStateOf<String?>(null) }
     val base = rom.base(pk.species)
 
@@ -185,6 +187,7 @@ private fun SummaryTab(pk: Mon, editor: MonEditor, rom: GameData, edit: (() -> U
     }
 
     Text("Friendship: ${pk.friendship}", style = MaterialTheme.typography.labelLarge)
+    Text("Origin: ${origin ?: "unknown"}", style = MaterialTheme.typography.labelLarge)
     Slider(pk.friendship.toFloat(), { v -> edit { pk.friendship = v.toInt() } }, valueRange = 0f..255f)
 
     Text(

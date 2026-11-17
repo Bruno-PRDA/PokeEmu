@@ -156,7 +156,25 @@ class GlobalPcTest {
         }
     }
 
-    @Test fun namesMatchAcrossSpellings() {
+    @Test fun theFirstGameIsRememberedAsTheOriginAcrossMoves() {
+        val dir = Files.createTempDirectory("pc").toFile()
+        val pc = GlobalPc(dir)
+        val src = editor(vanilla, boxed = pikachu(party = false))
+        val mon = src[Slot.Box(0, 0)]!!
+        val stored = pc.deposit(src, mon, "Odyssey v4.1", "rom-a")
+        assertEquals("Odyssey v4.1", stored.originGame)
+
+        // Moved into another game, then deposited again from there: still from Odyssey.
+        val target = editor(hack)
+        val moved = Transfer.adapt(stored, target, "rom-b").mon
+        target.insert(Slot.Box(1, 0), moved)
+        pc.remove(stored)
+        val again = pc.deposit(target, target[Slot.Box(1, 0)]!!, "Amethyst", "rom-b")
+        assertEquals("Odyssey v4.1", again.originGame)
+        assertEquals("Odyssey v4.1", GlobalPc(dir).list().single().originGame)
+    }
+
+        @Test fun namesMatchAcrossSpellings() {
         assertEquals(2, Transfer.find(listOf("-", "x", "Farfetch’d"), "FARFETCH'D"))
         assertEquals(1, Transfer.find(listOf("-", "Nidoran♀", "Nidoran♂"), "NIDORAN♀"))
         assertEquals(1, Transfer.find(listOf("-", "Flabébé"), "FLABEBE"))

@@ -59,6 +59,7 @@ import com.pokeemu.core.Mon
 import com.pokeemu.core.Slot
 import com.pokeemu.core.StoredMon
 import com.pokeemu.core.Transfer
+import com.pokeemu.gen4.Gen3To4
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -75,7 +76,8 @@ import kotlinx.coroutines.withContext
 fun GlobalPcScreen(games: List<RomEntry>, onBack: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val pc = remember { GlobalPc(File(context.filesDir, "global-pc")) }
+    val pc = remember { Gen3To4.register(); GlobalPc(File(context.filesDir, "global-pc")) }
+    val origins = remember { Origins(context) }
     var stored by remember { mutableStateOf(pc.list()) }
     var game by remember { mutableStateOf<RomEntry?>(null) }
     var open by remember { mutableStateOf<OpenSave?>(null) }
@@ -206,7 +208,10 @@ fun GlobalPcScreen(games: List<RomEntry>, onBack: () -> Unit) {
                 when {
                     game == null -> CenteredNote("Pick a game to move Pokémon in or out of it.")
                     o == null -> CenteredNote(status ?: "", loading = status?.startsWith("Can't") != true)
-                    else -> GameBoxes(o, box, tick, onBox = { box = it }, onSlot = { deposit = it })
+                    else -> GameBoxes(
+                        o, box, tick, onBox = { box = it }, onSlot = { deposit = it },
+                        isForeign = { mon -> origins.isForeign(mon, game!!.name, o.editor.fileExtension) },
+                    )
                 }
                 if (busy) CircularProgressIndicator(Modifier.align(Alignment.Center))
             }
@@ -221,21 +226,28 @@ fun GlobalPcScreen(games: List<RomEntry>, onBack: () -> Unit) {
         AlertDialog(
             onDismissRequest = { deposit = null },
             title = { Text("Move $name to the global PC?") },
-            text = { Text("It leaves ${game?.name}. You can move it into this or any other game later.") },
+            text = {
+                Text(
+                    "It leaves ${game?.name}. You can move it into this or any other game later." +
+                        (origins.describe(mon)?.let { "\n\nOrigin: $it" } ?: ""),
+                )
+            },
             confirmButton = { TextButton(onClick = { deposit = null; doDeposit(slot) }) { Text("Move") } },
             dismissButton = { TextButton(onClick = { deposit = null }) { Text("Cancel") } },
         )
     }
     withdraw?.let { s ->
         val sameGame = o?.romId == s.fromRomId
+        val toDs = s.format == "pk3" && o?.editor?.fileExtension == "pk4"
         AlertDialog(
             onDismissRequest = { withdraw = null },
             title = { Text("Move ${displayName(s.speciesName, s.nickname)} into ${game?.name}?") },
             text = {
                 Text(
                     "It goes into the first free spot in this game's PC." +
-                        if (sameGame) "" else " Its species, moves and held item are matched by name in this game; " +
-                            "anything the game doesn't have is left out.",
+                        (if (sameGame) "" else " Its species, moves and held item are matched by name in this game; " +
+                            "anything the game doesn't have is left out.") +
+                        (if (toDs) " Like Pal Park, it's met at Pal Park and can't go back to a GBA game afterwards." else ""),
                 )
             },
             confirmButton = { TextButton(onClick = { withdraw = null; doWithdraw(s) }) { Text("Move") } },
@@ -279,8 +291,11 @@ private fun StoredCard(s: StoredMon, onClick: () -> Unit) {
                 fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
             Text(s.speciesName + (s.level?.let { " · Lv$it" } ?: ""), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            s.originGame?.takeIf { Transfer.normalize(it) != Transfer.normalize(s.fromGame) }?.let {
+                Text("caught in $it", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.tertiary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
             Text(
-                "from ${s.fromGame}",
+                "from ${s.fromGame} · ${if (s.format == "pk3") "GBA" else "DS"}",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1, overflow = TextOverflow.Ellipsis,
@@ -290,7 +305,7 @@ private fun StoredCard(s: StoredMon, onClick: () -> Unit) {
 }
 
 @Composable
-private fun GameBoxes(o: OpenSave, box: Int, tick: Int, onBox: (Int) -> Unit, onSlot: (Slot) -> Unit) {
+private fun GameBoxes(o: OpenSave, box: Int, tick: Int, onBox: (Int) -> Unit, onSlot: (Slot) -> Unit, isForeign: (Mon) -> Boolean) {
     val e = o.editor
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -318,7 +333,9 @@ private fun GameBoxes(o: OpenSave, box: Int, tick: Int, onBox: (Int) -> Unit, on
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                items(slots) { (slot, mon) -> SlotCell(e.data.speciesName(mon?.species ?: 0), mon, mon?.let(e::level)) { onSlot(slot) } }
+                items(slots) { (slot, mon) ->
+                    SlotCell(e.data.speciesName(mon?.species ?: 0), mon, mon?.let(e::level), foreign = mon?.let(isForeign) == true) { onSlot(slot) }
+                }
             }
         }
     }
@@ -328,7 +345,7 @@ private fun GameBoxes(o: OpenSave, box: Int, tick: Int, onBox: (Int) -> Unit, on
 private fun key(tick: Int, content: @Composable () -> Unit) = androidx.compose.runtime.key(tick) { content() }
 
 @Composable
-private fun SlotCell(species: String, mon: Mon?, level: Int?, onClick: () -> Unit) {
+private fun SlotCell(species: String, mon: Mon?, level: Int?, foreign: Boolean, onClick: () -> Unit) {
     if (mon == null) {
         OutlinedCard(Modifier.fillMaxWidth().aspectRatio(0.9f), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {}
         return
@@ -338,6 +355,8 @@ private fun SlotCell(species: String, mon: Mon?, level: Int?, onClick: () -> Uni
         modifier = Modifier.fillMaxWidth().aspectRatio(0.9f),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
     ) {
+        Box(Modifier.fillMaxSize()) {
+        if (foreign) ForeignDot(Modifier.align(Alignment.TopEnd).padding(4.dp))
         Column(
             Modifier.fillMaxSize().padding(2.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -348,6 +367,7 @@ private fun SlotCell(species: String, mon: Mon?, level: Int?, onClick: () -> Uni
                 fontSize = 10.sp, lineHeight = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center,
             )
             if (level != null && !mon.isEgg) Text("Lv$level", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSecondaryContainer)
+        }
         }
     }
 }

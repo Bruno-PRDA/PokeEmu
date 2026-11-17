@@ -111,6 +111,11 @@ class Pk4(raw: ByteArray) : Mon {
     override val nickname: String get() = Gen4Text.decode(plain, 0x48, 11)
     fun setNickname(text: String) = Gen4Text.encode(text, 11).copyInto(plain, 0x48)
     override val otName: String get() = Gen4Text.decode(plain, 0x68, 8)
+    override val originVersion: Int get() = plain.u8(0x5F)
+    /** Met level (low 7 bits of 0x84; bit 7 is the OT's gender). */
+    var metLevel: Int
+        get() = plain.u8(0x84) and 0x7F
+        set(v) { plain[0x84] = ((plain.u8(0x84) and 0x80) or v.coerceIn(0, 100)).toByte() }
 
     override val nature get() = (personality % 25).toInt()
     override val isShiny get() = (trainerId xor secretId xor (personality shr 16).toInt() xor (personality and 0xFFFF).toInt()) < 8
