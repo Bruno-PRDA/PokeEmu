@@ -26,6 +26,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CatchingPokemon
+import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
@@ -89,6 +90,7 @@ fun LibraryScreen(
     onOpen: (RomEntry) -> Unit,
     onManageSaves: (RomEntry) -> Unit,
     onEditPokemon: (RomEntry) -> Unit,
+    onCheats: (RomEntry) -> Unit,
     onRemove: (RomEntry) -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
@@ -181,6 +183,7 @@ fun LibraryScreen(
                 onOpen = onOpen,
                 onManageSaves = onManageSaves,
                 onEditPokemon = onEditPokemon,
+                onCheats = onCheats,
                 onRemove = { removing = it },
             )
         }
@@ -263,6 +266,7 @@ private fun GameOptions(
     onOpen: (RomEntry) -> Unit,
     onManageSaves: (RomEntry) -> Unit,
     onEditPokemon: (RomEntry) -> Unit,
+    onCheats: (RomEntry) -> Unit,
     onRemove: (RomEntry) -> Unit,
 ) {
     Column(Modifier.padding(bottom = 24.dp)) {
@@ -282,6 +286,7 @@ private fun GameOptions(
         Option(Icons.Default.PlayArrow, "Play") { onAction(onOpen) }
         Option(Icons.Default.Save, "Save manager") { onAction(onManageSaves) }
         Option(Icons.Default.Edit, "Edit Pokémon") { onAction(onEditPokemon) }
+        Option(Icons.Default.Code, "Cheats") { onAction(onCheats) }
         Option(Icons.Default.Delete, "Remove game") { onAction(onRemove) }
     }
 }

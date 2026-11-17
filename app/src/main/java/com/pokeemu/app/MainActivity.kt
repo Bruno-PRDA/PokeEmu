@@ -13,12 +13,17 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.lifecycleScope
+import com.pokeemu.app.ui.CheatsScreen
 import com.pokeemu.app.ui.EditorScreen
 import com.pokeemu.app.ui.GlobalPcScreen
 import com.pokeemu.app.ui.LibraryScreen
 import com.pokeemu.app.ui.PokeEmuTheme
 import com.pokeemu.app.ui.SaveManagerScreen
+import com.pokeemu.saves.CheatStore
+import com.pokeemu.saves.GameStorage
 import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -29,6 +34,8 @@ class MainActivity : ComponentActivity() {
     private var managingSaves by mutableStateOf<RomEntry?>(null)
     private var editing by mutableStateOf<RomEntry?>(null)
     private var globalPc by mutableStateOf(false)
+    /** The game whose cheat list is open, with its ROM id (where its cheats are stored). */
+    private var cheatsFor by mutableStateOf<Pair<RomEntry, String>?>(null)
 
     /** "+": pick one or more files anywhere (Downloads, …); each is copied into the app. */
     private val pickFiles = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris: List<Uri> ->
@@ -47,6 +54,15 @@ class MainActivity : ComponentActivity() {
                 LaunchedEffect(Unit) { start() }
                 editing?.let { rom ->
                     EditorScreen(rom, onBack = { editing = null })
+                    return@PokeEmuTheme
+                }
+                cheatsFor?.let { (rom, id) ->
+                    CheatsScreen(
+                        title = rom.name,
+                        store = CheatStore(GameStorage(filesDir), id),
+                        platform = rom.header.platform,
+                        onBack = { cheatsFor = null },
+                    )
                     return@PokeEmuTheme
                 }
                 if (globalPc) {
@@ -71,6 +87,12 @@ class MainActivity : ComponentActivity() {
                     onOpen = { rom -> startActivity(PlayerActivity.intent(this, rom.uri, rom.fileName)) },
                     onManageSaves = { managingSaves = it },
                     onEditPokemon = { editing = it },
+                    onCheats = { rom ->
+                        lifecycleScope.launch {
+                            val id = withContext(Dispatchers.IO) { library.localCopy(rom.uri).id }
+                            cheatsFor = rom to id
+                        }
+                    },
                     onRemove = { rom ->
                         lifecycleScope.launch {
                             library.remove(rom)

@@ -27,6 +27,12 @@ class EmulatorSession private constructor() {
     fun resume() = NativeBridge.nativeResume()
     fun reset() = NativeBridge.nativeReset()
 
+    /**
+     * Replaces the running game's cheats with [codes] (one string per cheat,
+     * lines joined with "+"). False if the core can't do cheats.
+     */
+    fun setCheats(codes: List<String>): Boolean = NativeBridge.nativeSetCheats(codes.toTypedArray())
+
     fun setSurface(surface: Surface?) = NativeBridge.nativeSetSurface(surface)
     fun setButtons(mask: Int) = NativeBridge.nativeSetButtons(mask)
     fun setSpeed(multiplier: Int) = NativeBridge.nativeSetSpeed(multiplier)

@@ -92,6 +92,20 @@ JNI_FN(void, nativeReset)(JNIEnv*, jobject) {
     if (gSession) gSession->reset();
 }
 
+JNI_FN(jboolean, nativeSetCheats)(JNIEnv* env, jobject, jobjectArray codes) {
+    if (!gSession) return JNI_FALSE;
+    std::vector<std::string> list;
+    jsize n = env->GetArrayLength(codes);
+    for (jsize i = 0; i < n; ++i) {
+        auto js = static_cast<jstring>(env->GetObjectArrayElement(codes, i));
+        const char* c = env->GetStringUTFChars(js, nullptr);
+        list.emplace_back(c);
+        env->ReleaseStringUTFChars(js, c);
+        env->DeleteLocalRef(js);
+    }
+    return gSession->setCheats(list) ? JNI_TRUE : JNI_FALSE;
+}
+
 JNI_FN(jbyteArray, nativeSaveState)(JNIEnv* env, jobject) {
     if (!gSession) return nullptr;
     auto state = gSession->saveState();

@@ -28,7 +28,12 @@ import com.pokeemu.app.ui.ResumePrompt
 import com.pokeemu.app.ui.StateSlotsDialog
 import com.pokeemu.core.Button
 import com.pokeemu.core.EmulatorSession
+import com.pokeemu.saves.CheatStore
 import com.pokeemu.saves.GameStorage
+import com.pokeemu.saves.Platform
+import com.pokeemu.app.ui.CheatsScreen
+import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.fillMaxSize
 import com.pokeemu.saves.SaveManager
 import com.pokeemu.saves.romId
 import com.pokeemu.saves.NdsHeader
@@ -54,7 +59,7 @@ import java.io.File
 
 class PlayerActivity : ComponentActivity() {
 
-    private enum class Dialog { NONE, MENU, SAVE_STATE, LOAD_STATE, RESUME_PROMPT }
+    private enum class Dialog { NONE, MENU, SAVE_STATE, LOAD_STATE, RESUME_PROMPT, CHEATS }
 
     private val storage by lazy { GameStorage(filesDir) }
     private var session: EmulatorSession? = null
@@ -125,6 +130,7 @@ class PlayerActivity : ComponentActivity() {
                         onReset = { session?.reset(); showDialog(Dialog.NONE) },
                         onQuit = { finish() },
                         onDismiss = { showDialog(Dialog.NONE) },
+                        onCheats = { showDialog(Dialog.CHEATS) },
                         dsLayout = if (isDs) dsLayout else null,
                         onDsLayout = { l ->
                             dsLayout = l
@@ -142,6 +148,23 @@ class PlayerActivity : ComponentActivity() {
                         onContinue = { loadState(GameStorage.AUTO_SLOT) },
                         onFresh = { showDialog(Dialog.NONE) },
                     )
+                    Dialog.CHEATS -> gameId?.let { id ->
+                        // Its own window: the game's SurfaceView would draw over anything in this one.
+                        androidx.compose.ui.window.Dialog(
+                            onDismissRequest = { showDialog(Dialog.MENU) },
+                            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+                        ) {
+                            androidx.compose.material3.Surface(Modifier.fillMaxSize()) {
+                                CheatsScreen(
+                                    title = intent.getStringExtra(EXTRA_NAME)?.substringBeforeLast('.') ?: "Game",
+                                    store = CheatStore(storage, id),
+                                    platform = if (isDs) Platform.NDS else Platform.GBA,
+                                    onBack = { showDialog(Dialog.MENU) },
+                                    onChanged = ::applyCheats,
+                                )
+                            }
+                        }
+                    }
                     Dialog.NONE -> Unit
                 }
             }
@@ -174,6 +197,7 @@ class PlayerActivity : ComponentActivity() {
                     saveFile = storage.saveFile(id),
                 )
             }
+            applyCheats() // before the first frame
             session!!.start()
             ready = true
             if (storage.readState(id, GameStorage.AUTO_SLOT) != null) showDialog(Dialog.RESUME_PROMPT)
@@ -253,6 +277,16 @@ class PlayerActivity : ComponentActivity() {
     }
 
     // ---- pause / resume -----------------------------------------------------
+
+    /** Sends this game's enabled cheats to the core (replacing what it had). */
+    private fun applyCheats() {
+        val id = gameId ?: return
+        val s = session ?: return
+        val codes = CheatStore(storage, id).enabledCodes()
+        if (!s.setCheats(codes) && codes.isNotEmpty()) {
+            android.widget.Toast.makeText(this, "This emulator core can't run cheats", android.widget.Toast.LENGTH_LONG).show()
+        }
+    }
 
     private fun showDialog(d: Dialog) {
         dialog = d

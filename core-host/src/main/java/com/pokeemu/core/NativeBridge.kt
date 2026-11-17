@@ -20,6 +20,7 @@ internal object NativeBridge {
     external fun nativeSetPointer(x: Int, y: Int, pressed: Boolean)
     external fun nativeSetVariable(key: String, value: String)
     external fun nativeReset()
+    external fun nativeSetCheats(codes: Array<String>): Boolean
     external fun nativeSaveState(): ByteArray?
     external fun nativeLoadState(state: ByteArray): Boolean
     external fun nativeFlushSave(): Boolean

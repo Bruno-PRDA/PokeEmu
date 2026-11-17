@@ -36,6 +36,7 @@ public:
     }
     void setSpeed(int multiplier) { speed_.store(multiplier < 1 ? 1 : multiplier); }
     void reset();
+    bool setCheats(const std::vector<std::string>& codes);
 
     std::vector<uint8_t> saveState();
     bool loadState(const std::vector<uint8_t>& state);

@@ -140,6 +140,11 @@ void Session::reset() {
     core_.reset();
 }
 
+bool Session::setCheats(const std::vector<std::string>& codes) {
+    std::lock_guard<std::mutex> lock(coreMutex_);  // between frames
+    return core_.setCheats(codes);
+}
+
 void Session::loop() {
     using clock = std::chrono::steady_clock;
     const double fps = core_.avInfo().timing.fps > 0 ? core_.avInfo().timing.fps : 60.0;

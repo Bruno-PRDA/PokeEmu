@@ -58,6 +58,9 @@ bool LibretroCore::open(const std::string& libraryName, const std::string& syste
               sym(retro_unserialize_, "retro_unserialize") &&
               sym(retro_get_memory_data_, "retro_get_memory_data") &&
               sym(retro_get_memory_size_, "retro_get_memory_size");
+    // Optional: not every core supports cheats.
+    retro_cheat_reset_ = reinterpret_cast<decltype(retro_cheat_reset_)>(dlsym(handle_, "retro_cheat_reset"));
+    retro_cheat_set_ = reinterpret_cast<decltype(retro_cheat_set_)>(dlsym(handle_, "retro_cheat_set"));
     if (!ok) {
         dlclose(handle_);
         handle_ = nullptr;
@@ -115,6 +118,13 @@ void LibretroCore::runFrame() {
 
 void LibretroCore::reset() {
     if (gameLoaded_) retro_reset_();
+}
+
+bool LibretroCore::setCheats(const std::vector<std::string>& codes) {
+    if (!gameLoaded_ || !retro_cheat_reset_ || !retro_cheat_set_) return false;
+    retro_cheat_reset_();
+    for (unsigned i = 0; i < codes.size(); ++i) retro_cheat_set_(i, true, codes[i].c_str());
+    return true;
 }
 
 void LibretroCore::close() {

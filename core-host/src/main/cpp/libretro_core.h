@@ -30,6 +30,9 @@ public:
     bool loadGame(const void* data, size_t size, const std::string& path);
     void runFrame();
     void reset();
+    // Replaces all cheats with [codes] (each enabled). Cores apply them every frame.
+    // Returns false if the core has no cheat support.
+    bool setCheats(const std::vector<std::string>& codes);
     // Unloads the game and core.
     void close();
 
@@ -93,6 +96,8 @@ private:
     void (*retro_unload_game_)() = nullptr;
     void (*retro_run_)() = nullptr;
     void (*retro_reset_)() = nullptr;
+    void (*retro_cheat_reset_)() = nullptr;
+    void (*retro_cheat_set_)(unsigned, bool, const char*) = nullptr;
     size_t (*retro_serialize_size_)() = nullptr;
     bool (*retro_serialize_)(void*, size_t) = nullptr;
     bool (*retro_unserialize_)(const void*, size_t) = nullptr;
