@@ -121,10 +121,16 @@ class Gen3Sprites(private val tables: SpriteTables, private val read: (offset: I
             // Front and back tables look alike; back sprites fill the bottom of the picture.
             val front = pics.filter { it.second >= pics.maxOf { p -> p.second } * 9 / 10 }
                 .minByOrNull { (table, _) -> bottomEdge(rom, table) }?.first ?: -1
-            val normal = pals.filter { it.third == 0 }.maxByOrNull { it.second }
+            // Tables tagged with the species itself; the longest ones are the real ones.
+            val plain = pals.filter { it.third == 0 }.let { l -> l.filter { it.second >= (l.maxOfOrNull { p -> p.second } ?: 0) * 9 / 10 } }
+                .sortedBy { it.first }
+                .distinctBy { it.first }
+            val normal = plain.firstOrNull()
             val shiny = pals.filter { p ->
                 p.third > 0 && (normal == null || p.first !in normal.first until normal.first + 8 * (normal.second + 1))
             }.maxByOrNull { it.second }
+                // Some engines tag shiny entries with the species too (R.O.W.E.): the second such table, after the normal one.
+                ?: plain.getOrNull(1)?.takeIf { s -> normal != null && s.first >= normal.first + 8 * normal.second }
             val icons = itemIcons(rom, referenced)
             val tables = SpriteTables(
                 frontPics = front, palettes = normal?.first ?: -1,

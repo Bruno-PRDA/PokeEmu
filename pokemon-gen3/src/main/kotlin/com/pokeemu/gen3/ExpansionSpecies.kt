@@ -132,7 +132,15 @@ internal class ExpansionSpecies(
      * Older versions keep teachable moves in their own table: one pointer per species
      * to a move list. Evolution families share most of theirs.
      */
-    private fun teachableTable(referenced: BitSet): List<List<Int>>? {
+    private fun teachableTable(referenced: BitSet): List<List<Int>>? = teachableTable(rom, referenced, speciesCount, moveCount)
+
+    companion object {
+        /** Per-species teachable move lists via a table of pointers (one per species), or null. */
+        fun teachableTable(rom: ByteArray, referenced: BitSet, speciesCount: Int, moveCount: Int): List<List<Int>>? =
+            ExpansionSpecies(rom, 0, 4, speciesCount, moveCount).findTeachableTable(referenced)
+    }
+
+    private fun findTeachableTable(referenced: BitSet): List<List<Int>>? {
         fun similar(a: List<Int>, b: List<Int>): Boolean {
             val union = (a + b).toSet().size
             return union > 0 && a.toSet().intersect(b.toSet()).size * 2 >= union

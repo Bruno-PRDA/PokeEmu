@@ -174,18 +174,26 @@ internal class LearnsetScanner(
      */
     internal fun tmListFromItems(): Pair<List<Int>, Int>? {
         val (base, stride) = itemTable ?: return null
-        if (stride != ITEM_SIZE) return null
-        // TM and HM items, with their description pointers.
-        val tms = java.util.TreeMap<Int, Long>()
-        val hms = java.util.TreeMap<Int, Long>()
+        if (stride < ITEM_SIZE) return null
+        // TM and HM items.
+        val tmItems = ArrayList<Pair<MatchResult, Int>>()
         for (i in 0 until 2048) {
             val o = base + i * stride
             if (o + stride > rom.size) break
             val len = (0 until 14).firstOrNull { rom.u8(o + it) == Gen3Text.TERMINATOR } ?: continue
             val name = Gen3Text.decode(rom, o, len).trim()
             val m = TM_ITEM.matchEntire(name) ?: continue
+            tmItems += m to o
+        }
+        if (tmItems.size < 8) return null
+        // Their description pointer: +20 in the vanilla 44-byte item; larger items move it (R.O.W.E.: +28).
+        fun pointsToText(p: Long) = romOffset(p)?.let { t -> (0 until 4).all { k -> t + k < rom.size && (Gen3Text.isChar(rom.u8(t + k)) || rom.u8(t + k) == 0xFE) } } == true
+        val descAt = (listOf(20) + (16..stride - 4 step 4)).firstOrNull { d -> tmItems.take(8).all { (_, o) -> pointsToText(rom.u32(o + d)) } } ?: return null
+        val tms = java.util.TreeMap<Int, Long>()
+        val hms = java.util.TreeMap<Int, Long>()
+        for ((m, o) in tmItems) {
             val number = m.groupValues[2].toInt()
-            val desc = rom.u32(o + 20)
+            val desc = rom.u32(o + descAt)
             if (m.groupValues[1].equals("TM", true)) tms.putIfAbsent(number, desc) else hms.putIfAbsent(number, desc)
         }
         if (tms.isEmpty()) return null

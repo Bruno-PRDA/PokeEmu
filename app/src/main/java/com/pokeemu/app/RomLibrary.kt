@@ -184,14 +184,13 @@ class RomLibrary(private val context: Context) {
 
     /**
      * The game's picture for the main menu: the cover the player chose, else
-     * the screen where they last stopped playing; null if neither exists.
-     * [version] changes whenever either file does (for refreshing the tile).
+     * one drawn from the ROM (its mascot Pokémon, see [DefaultCover]); null if
+     * neither can be had. Slow the first time for a game (reads the ROM).
      */
     fun coverFile(entry: RomEntry): File? {
         if (entry.id.isEmpty()) return null
         val storage = com.pokeemu.saves.GameStorage(context.filesDir)
-        return storage.coverFile(entry.id).takeIf { it.isFile }
-            ?: storage.thumbnailFile(entry.id, com.pokeemu.saves.GameStorage.AUTO_SLOT).takeIf { it.isFile }
+        return storage.coverFile(entry.id).takeIf { it.isFile } ?: DefaultCover.get(context, entry)
     }
 
     fun hasCustomCover(entry: RomEntry) =
