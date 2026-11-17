@@ -12,7 +12,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.ui.unit.Dp
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -64,12 +68,17 @@ import java.util.Date
 fun GameSurface(
     onSurface: (android.view.Surface?) -> Unit,
     aspect: Float,
+    /** The area to fit into; the surface is the largest [aspect] rectangle inside it, centred. */
     modifier: Modifier = Modifier,
-    matchHeight: Boolean = false,
     onTouch: ((Float, Float, Boolean) -> Unit)? = null,
-) {
+) = BoxWithConstraints(modifier, contentAlignment = Alignment.Center) {
+    val width = when {
+        maxWidth == Dp.Infinity -> maxHeight * aspect
+        maxHeight == Dp.Infinity -> maxWidth
+        else -> minOf(maxWidth, maxHeight * aspect)
+    }
     AndroidView(
-        modifier = modifier.aspectRatio(aspect, matchHeightConstraintsFirst = matchHeight),
+        modifier = Modifier.size(width, width / aspect),
         factory = { ctx ->
             SurfaceView(ctx).apply {
                 if (onTouch != null) setOnTouchListener { v, e ->
@@ -127,17 +136,10 @@ fun PlayerScreen(
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         if (landscape) {
-            val surface = @Composable {
-                GameSurface(onSurface, aspect, Modifier.align(Alignment.Center).fillMaxHeight(), matchHeight = true, onTouch = onTouch)
-            }
-            if (onTouch != null) {
-                // Touchscreen: the surface sits above the pad so it gets touches; buttons are beside it.
-                Gamepad(landscapePad, opacity = 0.8f, onButtons = onButtons)
-                surface()
-            } else {
-                surface()
-                Gamepad(landscapePad, opacity = 0.8f, onButtons = onButtons)
-            }
+            // The game view stays in the middle strip between the buttons: a SurfaceView is drawn
+            // above other views, so anything overlapping it would hide the controls.
+            Gamepad(landscapePad, opacity = 0.8f, onButtons = onButtons)
+            GameSurface(onSurface, aspect, Modifier.align(Alignment.Center).fillMaxHeight().fillMaxWidth(0.56f), onTouch = onTouch)
             Row(Modifier.align(Alignment.TopCenter)) { toolButtons() }
             if (overlayOpen) overlay(Modifier.align(Alignment.TopCenter).padding(top = 48.dp).width(360.dp).heightIn(max = 280.dp))
         } else {
@@ -149,10 +151,7 @@ fun PlayerScreen(
                     Modifier.fillMaxWidth().then(if (tall) Modifier.fillMaxHeight(0.62f) else Modifier),
                     contentAlignment = Alignment.TopCenter,
                 ) {
-                    GameSurface(
-                        onSurface, aspect, if (tall) Modifier.fillMaxHeight() else Modifier.fillMaxWidth(),
-                        matchHeight = tall, onTouch = onTouch,
-                    )
+                    GameSurface(onSurface, aspect, if (tall) Modifier.fillMaxSize() else Modifier.fillMaxWidth(), onTouch = onTouch)
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) { toolButtons() }
                 if (overlayOpen) overlay(Modifier.fillMaxWidth().padding(horizontal = 8.dp).heightIn(max = 260.dp))
@@ -192,7 +191,8 @@ fun PauseMenu(
         confirmButton = { TextButton(onClick = onDismiss) { Text("Resume") } },
         title = { Text("Paused") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            // Scrolls so every item stays reachable in landscape, where the dialog is short.
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilledTonalButton(onClick = onSaveState, Modifier.fillMaxWidth()) { Text("Save state") }
                 FilledTonalButton(onClick = onLoadState, Modifier.fillMaxWidth()) { Text("Load state") }
                 Text("Fast-forward speed", style = MaterialTheme.typography.labelLarge)
