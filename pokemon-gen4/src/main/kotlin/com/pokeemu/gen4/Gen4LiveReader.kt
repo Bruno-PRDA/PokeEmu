@@ -15,6 +15,11 @@ import com.pokeemu.core.LiveState
  * Which copy is live is decided by change: the copy whose bytes changed most
  * recently is shown, so HP drops in battle appear even while the save buffer
  * still holds the old values.
+ *
+ * Battle parties are heap allocations: the DS SDK's heap puts a 16-byte block
+ * header ("UD" for used, "FR" once freed) just before them. An opponent is only
+ * shown while its block is still in use, so its card goes away when the battle
+ * ends even though the bytes linger in RAM.
  */
 class Gen4LiveReader(
     /** The player's trainer ID / secret ID from the save; null if unknown. */
@@ -50,9 +55,24 @@ class Gen4LiveReader(
         ) ?: return null
         val player = groups.getValue(playerPids).maxWith(compareBy<Party> { lastChange(it) }.thenByDescending { it.offset })
         val opponent = parties
-            .filter { it.pids.intersect(playerPids).isEmpty() }
+            .filter { it.pids.intersect(playerPids).isEmpty() && isAllocated(ram, it) }
             .maxWithOrNull(compareBy<Party> { lastChange(it) }.thenByDescending { it.offset })
         return LiveState(player.mons, opponent?.mons.orEmpty())
+    }
+
+    /** True if a used heap block ("UD" header within 64 bytes before) contains this party. */
+    private fun isAllocated(ram: ByteArray, p: Party): Boolean {
+        val start = p.offset - 8 // capacity field
+        for (back in 16..64 step 4) {
+            val h = start - back
+            if (h < 0) break
+            if (ram.u16(h) == HEAP_USED) {
+                val size = ram.u32(h + 4)
+                return h + 16 + size >= p.offset + p.bytes
+            }
+            if (ram.u16(h) == HEAP_FREE) return false
+        }
+        return false
     }
 
     private fun isPlayers(pk: Pk4) =
@@ -93,5 +113,8 @@ class Gen4LiveReader(
         const val RAM_ADDRESS = 0x02000000L
         const val RAM_SIZE = 0x400000
         private const val MAX_STAT = 999
+        /** NitroSDK expanded-heap block signatures ("UD" used, "FR" free) as little-endian u16. */
+        private const val HEAP_USED = 0x5544
+        private const val HEAP_FREE = 0x5246
     }
 }

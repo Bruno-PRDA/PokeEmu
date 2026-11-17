@@ -41,6 +41,43 @@ class LiveReaderTest {
         assertTrue(state.opponents.isEmpty())
     }
 
+    /** IWRAM with a gMain at 0x10F0 (FireRed's spot) whose frame counter is [frames]. */
+    private fun iwram(frames: Long, inBattle: Boolean): ByteArray {
+        val w = ByteArray(0x8000)
+        val m = 0x10F0
+        w.put32(m, 0x08056535); w.put32(m + 4, if (inBattle) 0x08011101 else 0x080565B5)
+        w.put32(m + 0xC, 0x08000845)
+        w.put32(m + 0x24, frames)
+        w[m + 0x439] = if (inBattle) 2 else 0
+        // A decoy with a ROM pointer but a frame counter that never moves.
+        w.put32(0x2000 + 4, 0x08001234); w.put32(0x2000 + 0x24, 99)
+        return w
+    }
+
+    @Test fun hidesOpponentOnceTheBattleIsOver() {
+        val reader = LiveReader(ot, Gen3Game.FIRERED_LEAFGREEN)
+        val ram = fireRedRam(listOf(mon(16, 3, 0x3333, otId = 0x99999)))
+        // First read can't tell gMain from the decoy yet, so nothing is hidden.
+        assertEquals(1, reader.read(ram, iwram(100, inBattle = true))!!.opponents.size)
+        assertEquals(1, reader.read(ram, iwram(160, inBattle = true))!!.opponents.size)
+        // Battle over: the opponent's bytes are still in RAM, but the card goes.
+        assertTrue(reader.read(ram, iwram(220, inBattle = false))!!.opponents.isEmpty())
+        assertEquals(false, reader.inBattle(iwram(280, inBattle = false)))
+    }
+
+    /** Optional: POKEEMU_TEST_GBA_STATES=<folder of mGBA .state files> prints gMain.inBattle for each. */
+    @Test fun realStatesIfProvided() {
+        val dir = System.getenv("POKEEMU_TEST_GBA_STATES")?.let { java.io.File(it) } ?: return
+        val files = dir.listFiles { f -> f.extension == "state" }.orEmpty().sortedBy { it.name }
+        val reader = LiveReader(null, Gen3Game.FIRERED_LEAFGREEN)
+        for (f in files) {
+            val st = f.readBytes()
+            val iw = st.copyOfRange(0x19000, 0x21000)
+            // gMain is learned once the frame counter has grown between two states, so the first prints null.
+            println("${f.name}: inBattle=${reader.inBattle(iw)}")
+        }
+    }
+
     @Test fun readsOpponentsOnEitherSide() {
         val wild = listOf(mon(16, 3, 0x3333))
         val fr = LiveReader(ot, Gen3Game.FIRERED_LEAFGREEN).read(fireRedRam(wild))!!

@@ -202,13 +202,15 @@ class PlayerActivity : ComponentActivity() {
             val otId = save?.trainer?.let { (it.secretId.toLong() shl 16) or it.trainerId.toLong() }
             withContext(Dispatchers.Main) {
                 romData = data
-                liveReader = LiveReader(
+                val reader = LiveReader(
                     playerOtId = otId,
                     game = game,
                     encoding = save?.pkEncoding,
                     speciesCount = data?.speciesNames?.size?.takeIf { it > 0 } ?: 2048,
                     moveCount = data?.moveNames?.size?.takeIf { it > 0 } ?: 1024,
-                )::read
+                )
+                // IWRAM holds gMain, whose inBattle flag hides the opponent once a battle ends.
+                liveReader = { ram -> reader.read(ram, session?.readBus(GBA_IWRAM, GBA_IWRAM_SIZE)) }
             }
         }
     }
@@ -370,6 +372,8 @@ class PlayerActivity : ComponentActivity() {
     private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
 
     companion object {
+        private const val GBA_IWRAM = 0x03000000L
+        private const val GBA_IWRAM_SIZE = 0x8000
         private const val PREF_DS_LAYOUT = "ds_layout"
         private const val EXTRA_URI = "uri"
         private const val OVERLAY_REFRESH_MS = 500L

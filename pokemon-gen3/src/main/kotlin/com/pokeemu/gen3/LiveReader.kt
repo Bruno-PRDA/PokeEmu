@@ -18,6 +18,11 @@ import com.pokeemu.core.LiveState
  *
  * Offsets are cached and re-validated on every read, and searched again if the
  * game moves things around.
+ *
+ * The opponent's party stays in RAM after a battle, so when IWRAM is given the
+ * opponent is only shown while gMain.inBattle is set. gMain is found by shape
+ * (ROM callback pointers, key words, a frame counter that keeps counting), which
+ * is the same in Ruby/Sapphire, FireRed/LeafGreen, Emerald and hacks built on them.
  */
 class LiveReader(
     /** Full 32-bit OT id (TID | SID << 16) of the player, from the save; null if unknown. */
@@ -37,9 +42,39 @@ class LiveReader(
     private val opponentDelta = if (game == Gen3Game.FIRERED_LEAFGREEN) -PARTY_BYTES else PARTY_BYTES
     private var partyOffset: Int? = null
 
-    fun read(ram: ByteArray): LiveState? {
+    fun read(ram: ByteArray): LiveState? = read(ram, null)
+
+    /** [iwram] (32 KiB at 0x03000000) lets stale opponents be hidden after a battle; null = always show. */
+    fun read(ram: ByteArray, iwram: ByteArray?): LiveState? {
         val offset = partyOffset?.takeIf { record(ram, it) != null } ?: locate(ram).also { partyOffset = it } ?: return null
-        return LiveState(run(ram, offset), run(ram, offset + opponentDelta))
+        val showOpponent = iwram?.let { inBattle(it) } ?: true
+        return LiveState(run(ram, offset), if (showOpponent) run(ram, offset + opponentDelta) else emptyList())
+    }
+
+    private var gMainOffset: Int? = null
+    private var lastCounters: Map<Int, Long> = emptyMap()
+
+    /** gMain.inBattle, or null while gMain hasn't been found (then nothing is hidden). */
+    fun inBattle(iwram: ByteArray): Boolean? {
+        val known = gMainOffset?.takeIf { looksLikeGMain(iwram, it) }
+        if (known != null) return (iwram.u8(known + 0x439) shr 1) and 1 == 1
+        // Candidates by shape; the real one is the one whose frame counter advanced since the last read.
+        val counters = (0 until iwram.size - 0x440 step 4).filter { looksLikeGMain(iwram, it) }
+            .associateWith { iwram.u32(it + 0x24) }
+        gMainOffset = counters.entries.firstOrNull { (m, c) -> lastCounters[m]?.let { c > it } == true }?.key
+        lastCounters = counters
+        return gMainOffset?.let { (iwram.u8(it + 0x439) shr 1) and 1 == 1 }
+    }
+
+    private fun looksLikeGMain(w: ByteArray, m: Int): Boolean {
+        if (m < 0 || m + 0x440 > w.size) return false
+        fun rom(v: Long) = v in 0x08000000L until 0x0A000000L
+        if (!rom(w.u32(m + 4))) return false // callback2 is always set
+        for (o in listOf(0, 8, 0xC, 0x10, 0x14, 0x18)) w.u32(m + o).let { if (it != 0L && !rom(it)) return false }
+        w.u32(m + 0x20).let { if (it != 0L && it !in 0x02000000L until 0x03008000L) return false } // vblankCounter1
+        if (w.u32(m + 0x24) == 0L) return false // vblankCounter2 counts frames
+        for (k in 0 until 5) if (w.u16(m + 0x28 + k * 2) > 0x3FF) return false // key bitmasks
+        return true
     }
 
     /** Offset of the live player party in [ram], or null. */

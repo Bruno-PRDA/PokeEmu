@@ -18,6 +18,13 @@ class Gen4LiveReaderTest {
         return Pk4.fromPlain(plain).toBytes()
     }
 
+    /** A battle party in a used heap block, as the game allocates it. */
+    private fun putHeapParty(ram: ByteArray, at: Int, mons: List<ByteArray>, used: Boolean = true) {
+        ram.put16(at - 32, if (used) 0x5544 else 0x5246)
+        ram.put32(at - 28, 0x5C0)
+        putParty(ram, at, mons)
+    }
+
     private fun putParty(ram: ByteArray, at: Int, mons: List<ByteArray>) {
         ram.put32(at, 6)
         ram.put32(at + 4, mons.size.toLong())
@@ -36,11 +43,15 @@ class Gen4LiveReaderTest {
 
         // Battle: a wild Pokémon appears (it carries the player's ID, as wild Pokémon do),
         // and the first copy's Cyndaquil takes damage.
-        putParty(ram, 0x100000, listOf(mon(0x9999, 16)))
+        putHeapParty(ram, 0x100000, listOf(mon(0x9999, 16)))
         putParty(ram, 0x271FA4, listOf(mon(0x1111, 155, hp = 7), mine[1]))
         val battle = reader.read(ram)!!
         assertEquals(listOf(16), battle.opponents.map { it.species })
         assertEquals(7, battle.party[0].currentHp, "shows the copy that changed")
+
+        // Battle over: the block is freed but the bytes stay; the card must go.
+        putHeapParty(ram, 0x100000, listOf(mon(0x9999, 16)), used = false)
+        assertTrue(reader.read(ram)!!.opponents.isEmpty())
     }
 
     @Test fun nothingInEmptyRam() {
