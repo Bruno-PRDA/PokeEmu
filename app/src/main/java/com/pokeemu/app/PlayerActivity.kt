@@ -84,6 +84,12 @@ class PlayerActivity : ComponentActivity() {
     private var dsLayout by mutableStateOf(DsLayout.TOP_BOTTOM)
     /** In "Top + buttons": the touch screen is shown in the top screen's place for now. */
     private var peekingTouch by mutableStateOf(false)
+    /** Game volume (0..1) and mute, the same for every game. */
+    private var volume by mutableStateOf(1f)
+    private var muted by mutableStateOf(false)
+
+    /** A curve so the slider's middle sounds like half as loud. */
+    private fun applyVolume() { session?.setVolume(if (muted) 0f else volume * volume) }
     private val shownLayout get() = if (peekingTouch && dsLayout == DsLayout.TOP_ONLY) DsLayout.TOUCH_ONLY else dsLayout
     private val padStore by lazy { PadCustomStore(this) }
     /** The user's control layouts for this system (GBA or DS), loaded once the game type is known. */
@@ -167,6 +173,18 @@ class PlayerActivity : ComponentActivity() {
                         onEditControls = { showDialog(Dialog.EDIT_CONTROLS) },
                         onSetCover = ::useScreenAsCover,
                         onChallenges = if (pokemonTools) ({ showDialog(Dialog.CHALLENGES) }) else null,
+                        volume = volume,
+                        muted = muted,
+                        onVolume = {
+                            volume = it
+                            applyVolume()
+                            saveSetting { putFloat(PREF_VOLUME, it) }
+                        },
+                        onMute = {
+                            muted = it
+                            applyVolume()
+                            saveSetting { putBoolean(PREF_MUTED, it) }
+                        },
                         dsLayout = if (isDs) dsLayout else null,
                         onDsLayout = { l ->
                             dsLayout = l
@@ -275,6 +293,9 @@ class PlayerActivity : ComponentActivity() {
                     if (seen != null) ", visible to the game: ${seen.contentEquals(bytes)}" else "")
             }
             applyCheats() // before the first frame
+            volume = prefs.getFloat(PREF_VOLUME, 1f)
+            muted = prefs.getBoolean(PREF_MUTED, false)
+            applyVolume()
             if (pokemonTools) startChallenges(id)
             session!!.start()
             ready = true
@@ -545,6 +566,8 @@ class PlayerActivity : ComponentActivity() {
         private const val PREF_DS_LAYOUT = "ds_layout"
         private const val PREF_FF_SPEED = "ff_speed"
         private const val CHALLENGE_REFRESH_MS = 300L
+        private const val PREF_VOLUME = "volume"
+        private const val PREF_MUTED = "muted"
         private const val EXTRA_URI = "uri"
         private const val OVERLAY_REFRESH_MS = 500L
         private const val EXTRA_NAME = "name"

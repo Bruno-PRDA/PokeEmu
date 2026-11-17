@@ -99,6 +99,10 @@ JNI_FN(void, nativeSetVariable)(JNIEnv* env, jobject, jstring key, jstring value
     env->ReleaseStringUTFChars(value, v);
 }
 
+JNI_FN(void, nativeSetVolume)(JNIEnv*, jobject, jfloat volume) {
+    if (gSession) gSession->setVolume(volume);
+}
+
 JNI_FN(void, nativeSetSpeed)(JNIEnv*, jobject, jint multiplier) {
     if (gSession) gSession->setSpeed(multiplier);
 }

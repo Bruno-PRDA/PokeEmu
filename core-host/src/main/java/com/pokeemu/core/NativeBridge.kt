@@ -17,6 +17,7 @@ internal object NativeBridge {
     external fun nativeSetSurface(surface: Surface?)
     external fun nativeSetButtons(mask: Int)
     external fun nativeSetSpeed(multiplier: Int)
+    external fun nativeSetVolume(volume: Float)
     external fun nativeSetPointer(x: Int, y: Int, pressed: Boolean)
     external fun nativeSetVariable(key: String, value: String)
     external fun nativeReset()

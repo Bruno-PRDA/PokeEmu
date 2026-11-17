@@ -38,6 +38,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material.icons.filled.QueryStats
 import androidx.compose.material3.AlertDialog
@@ -285,6 +288,11 @@ fun PauseMenu(
     /** DS only: current screen layout (null hides the picker). */
     dsLayout: DsLayout? = null,
     onDsLayout: (DsLayout) -> Unit = {},
+    /** Game volume 0..1, and whether it's muted (the slider keeps its level while muted). */
+    volume: Float = 1f,
+    muted: Boolean = false,
+    onVolume: (Float) -> Unit = {},
+    onMute: (Boolean) -> Unit = {},
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -295,6 +303,24 @@ fun PauseMenu(
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilledTonalButton(onClick = onSaveState, Modifier.fillMaxWidth()) { Text("Save state") }
                 FilledTonalButton(onClick = onLoadState, Modifier.fillMaxWidth()) { Text("Load state") }
+                Text("Volume", style = MaterialTheme.typography.labelLarge)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { onMute(!muted) }) {
+                        Icon(
+                            if (muted || volume == 0f) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
+                            if (muted) "Unmute" else "Mute",
+                            tint = if (muted) MaterialTheme.colorScheme.error else LocalContentColor.current,
+                        )
+                    }
+                    androidx.compose.material3.Slider(
+                        value = volume,
+                        onValueChange = { onVolume(it); if (muted) onMute(false) },
+                        modifier = Modifier.weight(1f),
+                        enabled = true,
+                    )
+                    Text(if (muted) "Muted" else "${(volume * 100).toInt()}%", Modifier.width(56.dp), textAlign = TextAlign.End,
+                        style = MaterialTheme.typography.labelMedium)
+                }
                 Text("Fast-forward speed", style = MaterialTheme.typography.labelLarge)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     for (s in listOf(2, 3, 4, 8)) {

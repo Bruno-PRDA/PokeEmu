@@ -37,6 +37,7 @@ public:
         pointerPressed_.store(pressed);
     }
     void setSpeed(int multiplier) { speed_.store(multiplier < 1 ? 1 : multiplier); }
+    void setVolume(float volume) { audio_.setGain(volume); }
     void reset();
     bool setCheats(const std::vector<std::string>& codes);
 

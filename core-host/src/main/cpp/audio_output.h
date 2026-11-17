@@ -22,6 +22,8 @@ public:
     void push(const int16_t* frames, size_t count);
     // Drops buffered audio (e.g. after loading a state).
     void clear();
+    // Output volume, 0 (silent) to 1 (as the game made it). Takes effect immediately.
+    void setGain(float gain) { gain_.store(gain < 0.f ? 0.f : (gain > 1.f ? 1.f : gain)); }
 
 private:
     bool openStream();
@@ -37,6 +39,7 @@ private:
     double outputRate_ = 48000.0;
     bool paused_ = false;
     std::atomic<bool> needsRestart_{false};
+    std::atomic<float> gain_{1.0f};
 
     // Single-producer (emu thread) / single-consumer (AAudio thread) ring of stereo frames.
     std::vector<int16_t> ring_;

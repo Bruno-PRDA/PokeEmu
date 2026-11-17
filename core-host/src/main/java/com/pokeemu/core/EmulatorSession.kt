@@ -37,6 +37,9 @@ class EmulatorSession private constructor() {
     fun setButtons(mask: Int) = NativeBridge.nativeSetButtons(mask)
     fun setSpeed(multiplier: Int) = NativeBridge.nativeSetSpeed(multiplier)
 
+    /** Game volume, 0 (muted) to 1 (full). */
+    fun setVolume(volume: Float) = NativeBridge.nativeSetVolume(volume)
+
     /**
      * Touchscreen input as a fraction of the whole video frame (0..1 on each
      * axis; for DS, the frame is both screens stacked). The core maps it to the
