@@ -1,17 +1,23 @@
 package com.pokeemu.app.ui
 
+import android.graphics.Bitmap
+import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,6 +26,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -28,22 +35,27 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -56,16 +68,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -74,12 +83,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.pokeemu.app.OpenSave
 import com.pokeemu.app.RomEntry
+import com.pokeemu.core.GameData
 import com.pokeemu.core.GlobalPc
 import com.pokeemu.core.Mon
 import com.pokeemu.core.Slot
 import com.pokeemu.core.StoredMon
 import com.pokeemu.core.Transfer
 import java.io.File
+import java.text.DateFormat
+import java.util.Date
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -90,16 +102,25 @@ private sealed interface Held {
     data class InGame(val slot: Slot) : Held
 }
 
+// A clean dark palette.
+private val Bg = Color(0xFF111317)
+private val Panel = Color(0xFF1A1D23)
+private val PanelHeader = Color(0xFF22262E)
+private val Spot = Color(0xFF242830)
+private val SpotLine = Color(0xFF2E333C)
+private val Accent = Color(0xFFFFC94A)
+private val TextMain = Color(0xFFECEFF4)
+private val TextDim = Color(0xFF9AA3B2)
+
 /**
  * The global Pokémon PC, laid out like the games' own PC: the global boxes on
- * top, one game's boxes (or party) below, each with a box wallpaper and a name
- * tab. Tap a Pokémon to pick it up, then tap where it goes: into a game's box,
- * into the global PC, or another spot in the same game. Each move is written to
- * the game's save at once (with a backup of the save as it was).
+ * top; below, a game picker, then that game's boxes and party. Tap a Pokémon to
+ * pick it up and tap where it goes; hold one for everything about it. Each move
+ * is written to the game's save at once (with a backup of the save as it was).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun GlobalPcScreen(games: List<RomEntry>, onBack: () -> Unit) {
+fun GlobalPcScreen(games: List<RomEntry>, cover: suspend (RomEntry) -> Bitmap?, onBack: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val pc = remember { com.pokeemu.gen5.Gen4To5.register(); GlobalPc(File(context.filesDir, "global-pc")) }
@@ -113,10 +134,22 @@ fun GlobalPcScreen(games: List<RomEntry>, onBack: () -> Unit) {
     var tick by remember { mutableIntStateOf(0) }
     var busy by remember { mutableStateOf(false) }
     var held by remember { mutableStateOf<Held?>(null) }
+    /** The Pokémon whose details are open (held down). */
+    var details by remember { mutableStateOf<Held?>(null) }
     /** A withdrawal that changes the Pokémon's generation, waiting for a yes. */
     var confirm by remember { mutableStateOf<Pair<StoredMon, Slot>?>(null) }
+    var exportBytes by remember { mutableStateOf<ByteArray?>(null) }
 
     fun toast(msg: String) = Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+
+    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri: Uri? ->
+        val bytes = exportBytes
+        if (uri != null && bytes != null) {
+            runCatching { context.contentResolver.openOutputStream(uri, "wt")!!.use { it.write(bytes) } }
+                .onSuccess { toast("Exported") }.onFailure { toast("Export failed: ${it.message}") }
+        }
+        exportBytes = null
+    }
 
     fun openGame(rom: RomEntry) {
         game = rom; open = null; status = "Opening save…"; box = 0
@@ -131,20 +164,25 @@ fun GlobalPcScreen(games: List<RomEntry>, onBack: () -> Unit) {
         }
     }
 
-    /** Runs a move; on failure the save is re-read so the screen matches the file. */
-    fun transfer(block: suspend (OpenSave) -> String?) {
-        val o = open ?: return
-        val rom = game ?: return
+    fun closeGame() {
+        game = null; open = null; status = null
+        if (held is Held.InGame) held = null
+    }
+
+    /** Runs a change; on failure the save is re-read so the screen matches the file. */
+    fun transfer(block: suspend (OpenSave?) -> String?) {
+        val o = open
+        val rom = game
         busy = true
         scope.launch {
             try {
                 block(o)?.let(::toast)
             } catch (e: IllegalArgumentException) {
                 toast(e.message ?: "Not allowed")
-                runCatching { open = OpenSave.open(context, rom) }
+                if (rom != null) runCatching { open = OpenSave.open(context, rom) }
             } catch (e: Exception) {
-                toast("Not moved: ${e.message}")
-                runCatching { open = OpenSave.open(context, rom) }
+                toast("Not done: ${e.message}")
+                if (rom != null) runCatching { open = OpenSave.open(context, rom) }
             }
             stored = withContext(Dispatchers.IO) { pc.list() }
             held = null
@@ -154,7 +192,7 @@ fun GlobalPcScreen(games: List<RomEntry>, onBack: () -> Unit) {
     }
 
     fun doDeposit(slot: Slot) = transfer { o ->
-        val e = o.editor
+        val e = o!!.editor
         val mon = e[slot] ?: return@transfer null
         val name = displayName(e.data.speciesName(mon.species), mon.nickname)
         pc.requireCanDeposit(mon)
@@ -171,12 +209,12 @@ fun GlobalPcScreen(games: List<RomEntry>, onBack: () -> Unit) {
             withContext(Dispatchers.IO) { pc.remove(entry) } // the game still has it
             throw ex
         }
-        globalBox = (stored.size) / SLOTS // show where it landed
+        globalBox = stored.size / SLOTS // show where it landed
         "$name moved to the global PC"
     }
 
     fun doWithdraw(s: StoredMon, target: Slot) = transfer { o ->
-        val e = o.editor
+        val e = o!!.editor
         val result = Transfer.adapt(s, e, o.romId)
         e.insert(target, result.mon)
         o.write()
@@ -186,7 +224,7 @@ fun GlobalPcScreen(games: List<RomEntry>, onBack: () -> Unit) {
     }
 
     fun doMove(from: Slot, to: Slot) = transfer { o ->
-        o.editor.move(from, to)
+        o!!.editor.move(from, to)
         o.write()
         null
     }
@@ -209,33 +247,79 @@ fun GlobalPcScreen(games: List<RomEntry>, onBack: () -> Unit) {
     fun onGameTap(slot: Slot, mon: Mon?) {
         when (val h = held) {
             is Held.Stored -> if (mon == null) withdrawTo(h.mon, slot) else held = Held.InGame(slot)
-            is Held.InGame -> when {
-                h.slot == slot -> held = null
-                else -> doMove(h.slot, slot)
-            }
+            is Held.InGame -> if (h.slot == slot) held = null else doMove(h.slot, slot)
             null -> if (mon != null) held = Held.InGame(slot)
         }
     }
 
-    BackHandler { if (held != null) held = null else onBack() }
+    // ---- details of a held-down Pokémon (full screen) ----
+    when (val d = details) {
+        is Held.InGame -> {
+            val o = open
+            val mon = o?.editor?.get(d.slot)
+            if (o != null && mon != null) {
+                BackHandler { details = null }
+                PokemonDetail(
+                    original = mon, editor = o.editor,
+                    onDone = { edited -> details = null; transfer { it!!.editor.replace(d.slot, edited); it.write(); "Saved" } },
+                    onCancel = { details = null },
+                    onDelete = { details = null; transfer { it!!.editor.delete(d.slot); it.write(); "Released" } },
+                    onExport = {
+                        exportBytes = o.editor.exportBytes(mon)
+                        exportLauncher.launch("${o.editor.data.speciesName(mon.species)}.${o.editor.fileExtension}")
+                    },
+                    origin = origins.describe(mon, game?.name, o.editor.fileExtension),
+                    sprites = o.sprites,
+                )
+                return
+            }
+            details = null
+        }
+        is Held.Stored -> {
+            BackHandler { details = null }
+            StoredDetail(
+                s = d.mon, sprite = pc.spriteFile(d.mon),
+                onClose = { details = null },
+                onExport = { exportBytes = d.mon.bytes; exportLauncher.launch("${d.mon.speciesName}.${d.mon.format}") },
+                onRelease = {
+                    details = null
+                    transfer { withContext(Dispatchers.IO) { pc.remove(d.mon) }; "${displayName(d.mon.speciesName, d.mon.nickname)} was released" }
+                },
+            )
+            return
+        }
+        null -> {}
+    }
+
+    BackHandler {
+        when {
+            held != null -> held = null
+            game != null -> closeGame()
+            else -> onBack()
+        }
+    }
     Scaffold(
+        containerColor = Bg,
         topBar = {
             TopAppBar(
-                title = { Text("Pokémon PC") },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
+                title = { Text("Pokémon PC", color = TextMain) },
+                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = TextMain) } },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Bg),
             )
         },
     ) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            InfoStrip(held, stored, open, game, origins, pc)
-
+        Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 10.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             // ---- global PC: its Pokémon in pages of 30, like boxes ----
             val pages = maxOf(1, (stored.size + SLOTS) / SLOTS) // always room for one more
             val page = globalBox.coerceIn(0, pages - 1)
+            val heldName = when (val h = held) {
+                is Held.Stored -> displayName(h.mon.speciesName, h.mon.nickname)
+                is Held.InGame -> open?.editor?.let { e -> e[h.slot]?.let { displayName(e.data.speciesName(it.species), it.nickname) } }
+                null -> null
+            }
             BoxPanel(
-                title = "GLOBAL BOX ${page + 1}",
-                subtitle = "${stored.size} stored",
-                wallpaper = GLOBAL_WALLPAPER,
+                title = { PixelText("GLOBAL PC", pixel = 2.5.dp, top = Color(0xFFD6E4FF), bottom = Color(0xFF7FA8FF)) },
+                subtitle = if (held is Held.InGame) "Tap here to store $heldName" else "Box ${page + 1} of $pages · ${stored.size} stored",
                 columns = 6,
                 cells = SLOTS,
                 onPrev = { globalBox = (page - 1 + pages) % pages },
@@ -244,45 +328,48 @@ fun GlobalPcScreen(games: List<RomEntry>, onBack: () -> Unit) {
                 highlight = held is Held.InGame,
             ) { i, size ->
                 val s = stored.getOrNull(page * SLOTS + i)
-                PcCell(size, held = s != null && (held as? Held.Stored)?.mon == s, onClick = { onGlobalTap(s) }) {
-                    if (s != null) StoredSprite(s, pc.spriteFile(s), size)
-                }
+                PcCell(
+                    size, held = s != null && (held as? Held.Stored)?.mon == s,
+                    onClick = { onGlobalTap(s) },
+                    onLongClick = if (s != null) ({ held = null; details = Held.Stored(s) }) else null,
+                ) { if (s != null) StoredSprite(s, pc.spriteFile(s), size) }
             }
 
-            // ---- one game ----
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp), contentPadding = PaddingValues(horizontal = 2.dp)) {
-                items(games, key = { it.uri.toString() }) { rom ->
-                    FilterChip(selected = game == rom, onClick = { if (game != rom) openGame(rom) }, label = { Text(rom.name, maxLines = 1) })
-                }
-            }
-            Box(Modifier.weight(1f).fillMaxWidth()) {
+            // ---- a game: pick one, then its PC ----
+            Box(Modifier.weight(1.1f).fillMaxWidth()) {
+                val g = game
                 val o = open
                 when {
-                    game == null -> PanelNote("Pick a game to move Pokémon in or out of it.")
-                    o == null -> PanelNote(status ?: "", loading = status?.startsWith("Can't") != true)
+                    g == null -> GamePicker(games, cover, onPick = ::openGame)
+                    o == null -> GamePanelFrame(g, onGames = ::closeGame) {
+                        PanelNote(status ?: "", loading = status?.startsWith("Can't") != true)
+                    }
                     else -> androidx.compose.runtime.key(tick) {
                         val e = o.editor
                         val party = box < 0
                         BoxPanel(
-                            title = if (party) "PARTY" else e.boxName(box).uppercase(),
-                            subtitle = game!!.name,
-                            wallpaper = if (party) PARTY_WALLPAPER else WALLPAPERS[box % WALLPAPERS.size],
+                            title = { PixelText(g.name, pixel = 2.5.dp) },
+                            subtitle = if (held is Held.Stored) "Tap an empty spot to put $heldName here"
+                            else if (party) "Party" else e.boxName(box),
                             columns = if (party) 3 else 6,
                             cells = if (party) 6 else e.boxSlots,
                             onPrev = { box = if (box <= -1) e.boxCount - 1 else box - 1 },
                             onNext = { box = if (box >= e.boxCount - 1) -1 else box + 1 },
                             modifier = Modifier.fillMaxSize(),
                             highlight = held is Held.Stored,
+                            onGames = ::closeGame,
                         ) { i, size ->
                             val slot: Slot = if (party) Slot.Party(i) else Slot.Box(box, i)
                             val mon = if (party) e.partyMembers.getOrNull(i) else e.box(box).getOrNull(i)
-                            PcCell(size, held = held == Held.InGame(slot), onClick = { onGameTap(slot, mon) }) {
-                                if (mon != null) GameSprite(o, mon, size, foreign = origins.isForeign(mon, game!!.name, e.fileExtension))
-                            }
+                            PcCell(
+                                size, held = held == Held.InGame(slot),
+                                onClick = { onGameTap(slot, mon) },
+                                onLongClick = if (mon != null) ({ held = null; details = Held.InGame(slot) }) else null,
+                            ) { if (mon != null) GameSprite(o, mon, size, foreign = origins.isForeign(mon, g.name, e.fileExtension)) }
                         }
                     }
                 }
-                if (busy) CircularProgressIndicator(Modifier.align(Alignment.Center))
+                if (busy) CircularProgressIndicator(Modifier.align(Alignment.Center), color = Accent)
             }
         }
     }
@@ -306,53 +393,86 @@ fun GlobalPcScreen(games: List<RomEntry>, onBack: () -> Unit) {
 
 private const val SLOTS = 30
 
+// ---- game picker ------------------------------------------------------------------------
+
+@Composable
+private fun GamePicker(games: List<RomEntry>, cover: suspend (RomEntry) -> Bitmap?, onPick: (RomEntry) -> Unit) {
+    Column(Modifier.fillMaxSize().clip(RoundedCornerShape(16.dp)).background(Panel)) {
+        Row(Modifier.fillMaxWidth().background(PanelHeader).padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            PixelText("SELECT A GAME", pixel = 2.5.dp, top = Color(0xFFE8ECF2), bottom = Color(0xFFA8B2C2))
+        }
+        if (games.isEmpty()) {
+            PanelNote("No game with a Pokémon save here yet. Add one to the library first.")
+            return
+        }
+        LazyVerticalGrid(
+            GridCells.Adaptive(150.dp),
+            contentPadding = PaddingValues(10.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            items(games, key = { it.uri.toString() }) { rom -> GameCard(rom, cover) { onPick(rom) } }
+        }
+    }
+}
+
+@Composable
+private fun GameCard(rom: RomEntry, cover: suspend (RomEntry) -> Bitmap?, onClick: () -> Unit) {
+    val image by produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, rom.uri) { value = cover(rom)?.asImageBitmap() }
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Spot)
+            .border(1.dp, SpotLine, RoundedCornerShape(12.dp)).clickable(onClick = onClick),
+    ) {
+        Box(Modifier.fillMaxWidth().aspectRatio(3f / 2f).background(Color(0xFF0C0E11)), contentAlignment = Alignment.Center) {
+            image?.let { Image(it, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, filterQuality = FilterQuality.None) }
+        }
+        Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            PixelText(rom.name, pixel = 1.5.dp)
+            Text(Transfer.generationLabel("pk${rom.header.pokemonGen ?: 3}"), color = TextDim, fontSize = 10.sp, maxLines = 1)
+        }
+    }
+}
+
+/** A game's panel before its save is open (same header as the box panel). */
+@Composable
+private fun GamePanelFrame(rom: RomEntry, onGames: () -> Unit, content: @Composable () -> Unit) {
+    Column(Modifier.fillMaxSize().clip(RoundedCornerShape(16.dp)).background(Panel)) {
+        Row(Modifier.fillMaxWidth().background(PanelHeader).padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.weight(1f).padding(start = 6.dp)) { PixelText(rom.name, pixel = 2.5.dp) }
+            IconButton(onClick = onGames) { Icon(Icons.Default.Apps, "Choose another game", tint = TextDim) }
+        }
+        content()
+    }
+}
+
 // ---- box panel ------------------------------------------------------------------------
 
-/** Box wallpaper colours: top, bottom, pattern. */
-private class Wallpaper(val top: Color, val bottom: Color, val pattern: Color)
-
-private val GLOBAL_WALLPAPER = Wallpaper(Color(0xFF5E4FA8), Color(0xFF2E2A6B), Color(0x33FFFFFF))
-private val PARTY_WALLPAPER = Wallpaper(Color(0xFFE85A4F), Color(0xFFA8323A), Color(0x33FFFFFF))
-private val WALLPAPERS = listOf(
-    Wallpaper(Color(0xFF6FBF5A), Color(0xFF3E8A3A), Color(0x2EFFFFFF)), // forest
-    Wallpaper(Color(0xFF8FA3B8), Color(0xFF56677A), Color(0x2EFFFFFF)), // city
-    Wallpaper(Color(0xFFE8C36A), Color(0xFFC08A3A), Color(0x33FFFFFF)), // desert
-    Wallpaper(Color(0xFFB8D86A), Color(0xFF7FA03A), Color(0x2EFFFFFF)), // savanna
-    Wallpaper(Color(0xFFA88A6A), Color(0xFF6E5440), Color(0x2EFFFFFF)), // crag
-    Wallpaper(Color(0xFFE8784F), Color(0xFF9E3A2E), Color(0x33FFE0A0)), // volcano
-    Wallpaper(Color(0xFFDDEEF8), Color(0xFF9FC4DE), Color(0x66FFFFFF)), // snow
-    Wallpaper(Color(0xFF6A6A8A), Color(0xFF3A3A55), Color(0x2EFFFFFF)), // cave
-    Wallpaper(Color(0xFFF2DFA0), Color(0xFF6FC6E0), Color(0x40FFFFFF)), // beach
-    Wallpaper(Color(0xFF3E7FC6), Color(0xFF1E3E7A), Color(0x33A0E0FF)), // seafloor
-    Wallpaper(Color(0xFF5FB8C8), Color(0xFF2E7A8A), Color(0x33FFFFFF)), // river
-    Wallpaper(Color(0xFF8FD0F0), Color(0xFF4F98D8), Color(0x55FFFFFF)), // sky
-)
-
 /**
- * One PC box: a name tab with arrows (swipe the box to turn the page too) over
- * a wallpaper with [cells] spots in [columns] columns. [highlight] marks it as
- * where the held Pokémon can go.
+ * One PC box: a header (pixel-art title, page arrows; swipe the box to turn
+ * the page too) over [cells] spots in [columns] columns. [highlight] marks it
+ * as where the held Pokémon can go. [onGames] adds a button back to the game picker.
  */
 @Composable
 private fun BoxPanel(
-    title: String,
+    title: @Composable () -> Unit,
     subtitle: String,
-    wallpaper: Wallpaper,
     columns: Int,
     cells: Int,
     onPrev: () -> Unit,
     onNext: () -> Unit,
     modifier: Modifier = Modifier,
     highlight: Boolean = false,
+    onGames: (() -> Unit)? = null,
     cell: @Composable (index: Int, size: Dp) -> Unit,
 ) {
-    val shape = RoundedCornerShape(14.dp)
+    val shape = RoundedCornerShape(16.dp)
     Column(
         modifier
             .fillMaxWidth()
             .clip(shape)
-            .border(if (highlight) 3.dp else 2.dp, if (highlight) Color(0xFFFFD54F) else Color(0x66000000), shape)
-            .pointerInput(title) {
+            .background(Panel)
+            .border(if (highlight) 2.dp else 1.dp, if (highlight) Accent else SpotLine, shape)
+            .pointerInput(subtitle) {
                 var dx = 0f
                 detectHorizontalDragGestures(
                     onDragStart = { dx = 0f },
@@ -360,35 +480,19 @@ private fun BoxPanel(
                 ) { _, amount -> dx += amount }
             },
     ) {
-        // Name tab
-        Row(
-            Modifier.fillMaxWidth().background(Brush.verticalGradient(listOf(wallpaper.top, wallpaper.bottom)))
-                .background(Color(0x55000000)).padding(horizontal = 4.dp, vertical = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+        Row(Modifier.fillMaxWidth().background(PanelHeader).padding(horizontal = 4.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             ArrowButton(left = true, onClick = onPrev)
-            Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(
-                    title, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    style = TextStyle(
-                        color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.sp,
-                        shadow = Shadow(Color(0xCC000000), Offset(2f, 2f), 0f),
-                    ),
-                )
-                Text(subtitle, maxLines = 1, overflow = TextOverflow.Ellipsis, color = Color(0xDDFFFFFF), fontSize = 10.sp)
+            Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                title()
+                Text(subtitle, maxLines = 1, overflow = TextOverflow.Ellipsis, color = if (highlight) Accent else TextDim, fontSize = 11.sp)
             }
             ArrowButton(left = false, onClick = onNext)
+            if (onGames != null) IconButton(onClick = onGames) { Icon(Icons.Default.Apps, "Choose another game", tint = TextDim) }
         }
-        // Wallpaper and spots
-        BoxWithConstraints(Modifier.fillMaxSize()) {
-            WallpaperCanvas(wallpaper)
+        BoxWithConstraints(Modifier.fillMaxSize().padding(6.dp)) {
             val rows = (cells + columns - 1) / columns
-            val size = minOf(maxWidth / columns, maxHeight / rows) - 2.dp
-            Column(
-                Modifier.fillMaxSize().padding(2.dp),
-                verticalArrangement = Arrangement.SpaceEvenly,
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
+            val size = minOf(maxWidth / columns, maxHeight / rows) - 4.dp
+            Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceEvenly, horizontalAlignment = Alignment.CenterHorizontally) {
                 for (r in 0 until rows) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                         for (c in 0 until columns) {
@@ -403,54 +507,33 @@ private fun BoxPanel(
 }
 
 @Composable
-private fun WallpaperCanvas(w: Wallpaper) {
-    Canvas(Modifier.fillMaxSize()) {
-        drawRect(Brush.verticalGradient(listOf(w.top, w.bottom)))
-        // A diamond pattern, like the games' box wallpapers.
-        val step = 28.dp.toPx()
-        val r = 5.dp.toPx()
-        var y = step / 2
-        var row = 0
-        while (y < size.height + step) {
-            var x = if (row % 2 == 0) step / 2 else step
-            while (x < size.width + step) {
-                val p = Path().apply {
-                    moveTo(x, y - r); lineTo(x + r, y); lineTo(x, y + r); lineTo(x - r, y); close()
-                }
-                drawPath(p, w.pattern)
-                x += step
-            }
-            y += step / 2; row++
-        }
-    }
-}
-
-@Composable
 private fun ArrowButton(left: Boolean, onClick: () -> Unit) {
     Box(Modifier.size(36.dp).clip(RoundedCornerShape(50)).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
-        Canvas(Modifier.size(16.dp)) {
+        Canvas(Modifier.size(14.dp)) {
             val p = Path().apply {
                 if (left) { moveTo(size.width, 0f); lineTo(0f, size.height / 2); lineTo(size.width, size.height) }
                 else { moveTo(0f, 0f); lineTo(size.width, size.height / 2); lineTo(0f, size.height) }
                 close()
             }
-            drawPath(p, Color.White)
+            drawPath(p, TextMain)
         }
     }
 }
 
-/** One spot in a box; the held Pokémon bobs and glows, like in the games. */
+/** One spot in a box; the held Pokémon bobs and glows, like in the games. Hold it for its details. */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun PcCell(size: Dp, held: Boolean, onClick: () -> Unit, content: @Composable () -> Unit) {
+private fun PcCell(size: Dp, held: Boolean, onClick: () -> Unit, onLongClick: (() -> Unit)?, content: @Composable () -> Unit) {
     val bob = if (held) {
         val t = rememberInfiniteTransition(label = "held")
         t.animateFloat(0f, -6f, infiniteRepeatable(tween(350), RepeatMode.Reverse), label = "bob").value
     } else 0f
+    val shape = RoundedCornerShape(10.dp)
     Box(
-        Modifier.size(size).clip(RoundedCornerShape(10.dp))
-            .background(if (held) Color(0x66FFD54F) else Color(0x1FFFFFFF))
-            .then(if (held) Modifier.border(2.dp, Color(0xFFFFD54F), RoundedCornerShape(10.dp)) else Modifier)
-            .clickable(onClick = onClick),
+        Modifier.size(size).clip(shape)
+            .background(if (held) Accent.copy(alpha = 0.22f) else Spot)
+            .border(if (held) 2.dp else 1.dp, if (held) Accent else SpotLine, shape)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
         contentAlignment = Alignment.Center,
     ) {
         Box(Modifier.offset(y = bob.dp)) { content() }
@@ -459,13 +542,9 @@ private fun PcCell(size: Dp, held: Boolean, onClick: () -> Unit, content: @Compo
 
 @Composable
 private fun PanelNote(text: String, loading: Boolean = false) {
-    Column(
-        Modifier.fillMaxSize().clip(RoundedCornerShape(14.dp)).background(MaterialTheme.colorScheme.surfaceVariant).padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
-        if (loading) CircularProgressIndicator()
-        Text(text, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 12.dp))
+    Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+        if (loading) CircularProgressIndicator(color = Accent)
+        Text(text, textAlign = TextAlign.Center, color = TextDim, modifier = Modifier.padding(top = 12.dp))
     }
 }
 
@@ -475,7 +554,7 @@ private fun PanelNote(text: String, loading: Boolean = false) {
 private fun StoredSprite(s: StoredMon, file: File, size: Dp) {
     Box(Modifier.size(size)) {
         SavedSprite(file, size, fit = true)
-        if (s.shiny) Text("★", Modifier.align(Alignment.TopStart).padding(2.dp), color = Color(0xFFFFE082), fontSize = 10.sp)
+        if (s.shiny) Text("★", Modifier.align(Alignment.TopStart).padding(3.dp), color = Accent, fontSize = 10.sp)
     }
 }
 
@@ -483,11 +562,10 @@ private fun StoredSprite(s: StoredMon, file: File, size: Dp) {
 private fun GameSprite(o: OpenSave, mon: Mon, size: Dp, foreign: Boolean) {
     Box(Modifier.size(size)) {
         MonSprite(o.sprites, if (mon.isEgg) 0 else mon.species, mon.isShiny, size, Modifier.align(Alignment.Center), fit = true)
-        if (mon.isShiny) Text("★", Modifier.align(Alignment.TopStart).padding(2.dp), color = Color(0xFFFFE082), fontSize = 10.sp)
-        if (foreign) ForeignDot(Modifier.align(Alignment.TopEnd).padding(3.dp))
+        if (mon.isShiny) Text("★", Modifier.align(Alignment.TopStart).padding(3.dp), color = Accent, fontSize = 10.sp)
+        if (foreign) ForeignDot(Modifier.align(Alignment.TopEnd).padding(4.dp))
         if (mon.heldItem != 0) Box(
-            Modifier.align(Alignment.BottomEnd).padding(2.dp).size(8.dp).clip(RoundedCornerShape(50)).background(Color(0xFFFFFFFF))
-                .border(1.dp, Color(0xFF555555), RoundedCornerShape(50)),
+            Modifier.align(Alignment.BottomEnd).padding(3.dp).size(7.dp).clip(RoundedCornerShape(50)).background(TextMain),
         )
     }
 }
@@ -501,7 +579,7 @@ private fun SavedSprite(file: File, size: Dp, fit: Boolean = false) {
             if (!fit) return@withContext b.asImageBitmap()
             val argb = IntArray(b.width * b.height).also { b.getPixels(it, 0, b.width, 0, 0, b.width, b.height) }
             com.pokeemu.core.Picture(b.width, b.height, argb).trimmed()?.squared()?.let {
-                android.graphics.Bitmap.createBitmap(it.argb, it.width, it.height, android.graphics.Bitmap.Config.ARGB_8888).asImageBitmap()
+                Bitmap.createBitmap(it.argb, it.width, it.height, Bitmap.Config.ARGB_8888).asImageBitmap()
             }
         }
     }
@@ -515,73 +593,105 @@ private fun SavedSprite(file: File, size: Dp, fit: Boolean = false) {
 }
 
 private fun savePng(p: com.pokeemu.core.Picture, file: File) {
-    val bitmap = android.graphics.Bitmap.createBitmap(p.argb, p.width, p.height, android.graphics.Bitmap.Config.ARGB_8888)
-    file.outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+    val bitmap = Bitmap.createBitmap(p.argb, p.width, p.height, Bitmap.Config.ARGB_8888)
+    file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
 }
 
-// ---- info strip -------------------------------------------------------------------------
+// ---- a stored Pokémon's details -----------------------------------------------------------
 
-/** The held Pokémon's details (the left panel of the in-game PC), or what to do. */
+/** The Pokémon record of a stored entry, for showing its stats. */
+private fun parse(s: StoredMon): Mon? = runCatching {
+    when (s.format) {
+        "pk3" -> com.pokeemu.gen3.Pk3(s.bytes.copyOf(com.pokeemu.gen3.Pk3.BOX_SIZE))
+        "pk4" -> com.pokeemu.gen4.Pk4(s.bytes.copyOf(com.pokeemu.gen4.Pk4.BOX_SIZE))
+        "pk5" -> com.pokeemu.gen5.Pk5(s.bytes.copyOf(com.pokeemu.gen5.Pk5.BOX_SIZE))
+        else -> null
+    }
+}.getOrNull()
+
+/**
+ * Everything about a Pokémon in the global PC. It's edited once it's in a game
+ * (hold it there); here it can be exported to a file or released.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun InfoStrip(held: Held?, stored: List<StoredMon>, open: OpenSave?, game: RomEntry?, origins: Origins, pc: GlobalPc) {
-    Row(
-        Modifier.fillMaxWidth().height(112.dp).clip(RoundedCornerShape(14.dp))
-            .background(Brush.horizontalGradient(listOf(Color(0xFF263238), Color(0xFF37474F))))
-            .padding(8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(Modifier.size(80.dp).clip(RoundedCornerShape(12.dp)).background(Color(0x33FFFFFF)), contentAlignment = Alignment.Center) {
-            when (held) {
-                is Held.Stored -> SavedSprite(pc.spriteFile(held.mon), 76.dp, fit = true)
-                is Held.InGame -> open?.editor?.get(held.slot)?.let { MonSprite(open.sprites, if (it.isEgg) 0 else it.species, it.isShiny, 76.dp, fit = true) }
-                null -> Text("PC", color = Color(0x88FFFFFF), fontWeight = FontWeight.ExtraBold, fontSize = 22.sp)
-            }
-        }
-        Column(Modifier.weight(1f).padding(start = 10.dp), verticalArrangement = Arrangement.spacedBy(1.dp)) {
-            val white = Color.White
-            val dim = Color(0xBBFFFFFF)
-            when (held) {
-                is Held.Stored -> {
-                    val s = held.mon
-                    Text(s.nickname.ifBlank { s.speciesName } + if (s.shiny) " ★" else "", color = white, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(listOfNotNull(s.speciesName, s.level?.let { "Lv $it" }, s.itemName?.let { "holds $it" }).joinToString(" · "), color = dim, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(
-                        "from ${s.fromGame} · ${Transfer.generationLabel(s.format)}" +
-                            (s.originGame?.takeIf { Transfer.normalize(it) != Transfer.normalize(s.fromGame) }?.let { " · caught in $it" } ?: ""),
-                        color = dim, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    )
-                    Hint(if (open == null) "Pick a game below, then tap an empty spot in it" else "Tap an empty spot in ${game?.name} to put it there")
+private fun StoredDetail(s: StoredMon, sprite: File, onClose: () -> Unit, onExport: () -> Unit, onRelease: () -> Unit) {
+    val mon = remember(s) { parse(s) }
+    var release by remember { mutableStateOf(false) }
+    Scaffold(
+        containerColor = Bg,
+        topBar = {
+            TopAppBar(
+                title = { Text(displayName(s.speciesName, s.nickname), color = TextMain, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                navigationIcon = { IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = TextMain) } },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Bg),
+            )
+        },
+    ) { padding ->
+        Column(
+            Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(horizontal = 14.dp, vertical = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Panel).padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(104.dp).clip(RoundedCornerShape(14.dp)).background(Spot), contentAlignment = Alignment.Center) {
+                    SavedSprite(sprite, 96.dp, fit = true)
                 }
-                is Held.InGame -> {
-                    val e = open?.editor
-                    val mon = e?.get(held.slot)
-                    if (e != null && mon != null) {
-                        val species = e.data.speciesName(mon.species)
-                        Text(displayName(species, mon.nickname) + if (mon.isShiny) " ★" else "", color = white, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(listOfNotNull(e.level(mon)?.let { "Lv $it" }, mon.heldItem.takeIf { it != 0 }?.let { "holds ${e.data.itemName(it)}" }).joinToString(" · "),
-                                color = dim, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            if (mon.heldItem != 0) ItemIcon(open.sprites, mon.heldItem, 20.dp, Modifier.padding(start = 4.dp))
-                        }
-                        origins.describe(mon, game?.name, e.fileExtension)?.let {
-                            Text("origin: $it", color = dim, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
+                Column(Modifier.padding(start = 14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    PixelText(s.nickname.ifBlank { s.speciesName }, pixel = 2.5.dp)
+                    Text(listOfNotNull(s.speciesName, s.level?.let { "Lv $it" }, if (s.shiny) "★ Shiny" else null).joinToString(" · "), color = TextMain, fontSize = 13.sp)
+                    mon?.let { Text("${GameData.NATURES.getOrElse(it.nature) { "?" }} nature", color = TextDim, fontSize = 12.sp) }
+                    Text(s.itemName?.let { "Holds $it" } ?: "No held item", color = TextDim, fontSize = 12.sp)
+                }
+            }
+            DetailCard("Moves") {
+                if (s.moveNames.isEmpty()) Text("—", color = TextDim)
+                s.moveNames.forEach { Text(it, color = TextMain, fontSize = 14.sp) }
+            }
+            if (mon != null) DetailCard("Stats") {
+                val labels = listOf("HP", "Attack", "Defense", "Speed", "Sp. Atk", "Sp. Def")
+                Row(Modifier.fillMaxWidth()) {
+                    Text("", Modifier.weight(1f))
+                    Text("IV", Modifier.width(44.dp), color = TextDim, fontSize = 12.sp, textAlign = TextAlign.End)
+                    Text("EV", Modifier.width(52.dp), color = TextDim, fontSize = 12.sp, textAlign = TextAlign.End)
+                }
+                labels.forEachIndexed { i, l ->
+                    Row(Modifier.fillMaxWidth()) {
+                        Text(l, Modifier.weight(1f), color = TextMain, fontSize = 14.sp)
+                        Text("${mon.iv(i)}", Modifier.width(44.dp), color = if (mon.iv(i) == 31) Accent else TextMain, fontSize = 14.sp, textAlign = TextAlign.End)
+                        Text("${mon.ev(i)}", Modifier.width(52.dp), color = TextMain, fontSize = 14.sp, textAlign = TextAlign.End)
                     }
-                    Hint("Tap the global PC to store it, or another spot to move it")
-                }
-                null -> {
-                    Text("Global PC", color = white, fontWeight = FontWeight.Bold)
-                    Text("${stored.size} Pokémon stored, shared by all your games", color = dim, fontSize = 12.sp)
-                    Hint("Tap a Pokémon to pick it up, then tap where it goes")
                 }
             }
+            DetailCard("Trainer and origin") {
+                mon?.let { Text("OT ${it.otName.ifBlank { "—" }} · ID %05d".format(it.trainerId), color = TextMain, fontSize = 14.sp) }
+                Text("Stored from ${s.fromGame} (${Transfer.generationLabel(s.format)})", color = TextMain, fontSize = 14.sp)
+                s.originGame?.takeIf { Transfer.normalize(it) != Transfer.normalize(s.fromGame) }?.let { Text("Caught in $it", color = TextMain, fontSize = 14.sp) }
+                Text("In the global PC since " + DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(s.storedAt)), color = TextDim, fontSize = 12.sp)
+            }
+            Text("To edit it, move it into a game and hold it there.", color = TextDim, fontSize = 12.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                FilledTonalButton(onClick = onExport, Modifier.weight(1f)) { Text("Export file") }
+                OutlinedButton(onClick = { release = true }, Modifier.weight(1f)) { Text("Release", color = Color(0xFFFF8A80)) }
+            }
+            Spacer(Modifier.height(12.dp))
         }
     }
+    if (release) AlertDialog(
+        onDismissRequest = { release = false },
+        title = { Text("Release ${displayName(s.speciesName, s.nickname)}?") },
+        text = { Text("It's removed from the global PC for good. Export it to a file first if you might want it back.") },
+        confirmButton = { TextButton(onClick = { release = false; onRelease() }) { Text("Release") } },
+        dismissButton = { TextButton(onClick = { release = false }) { Text("Cancel") } },
+    )
 }
 
 @Composable
-private fun Hint(text: String) =
-    Text(text, color = Color(0xFFFFD54F), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+private fun DetailCard(title: String, content: @Composable () -> Unit) {
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Panel).padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(title.uppercase(), color = Accent, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+        content()
+    }
+}
 
 private fun displayName(species: String, nickname: String) =
     if (nickname.isBlank() || nickname.equals(species, ignoreCase = true)) species else "$nickname ($species)"

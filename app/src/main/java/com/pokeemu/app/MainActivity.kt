@@ -101,7 +101,11 @@ class MainActivity : ComponentActivity() {
                     return@PokeEmuTheme
                 }
                 if (globalPc) {
-                    GlobalPcScreen(roms.filter { it.header.pokemonGen in GlobalPcGames }, onBack = { globalPc = false })
+                    GlobalPcScreen(
+                        roms.filter { it.header.pokemonGen in GlobalPcGames },
+                        cover = { rom -> withContext(Dispatchers.IO) { library.coverFile(rom)?.let { android.graphics.BitmapFactory.decodeFile(it.path) } } },
+                        onBack = { globalPc = false },
+                    )
                     return@PokeEmuTheme
                 }
                 managingSaves?.let { rom ->
