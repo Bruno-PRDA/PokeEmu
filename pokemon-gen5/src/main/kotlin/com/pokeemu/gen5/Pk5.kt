@@ -111,7 +111,8 @@ class Pk5(raw: ByteArray) : Mon {
     fun setNickname(text: String) = encodeString(text, 11).copyInto(plain, 0x48)
     override val otName: String get() = decodeString(plain, 0x68, 8)
     override val originVersion: Int get() = plain.u8(0x5F)
-    var metLevel: Int
+    override val metLocation: Int get() = plain.u16(0x80)
+    override var metLevel: Int
         get() = plain.u8(0x84) and 0x7F
         set(v) { plain[0x84] = ((plain.u8(0x84) and 0x80) or v.coerceIn(0, 100)).toByte() }
 

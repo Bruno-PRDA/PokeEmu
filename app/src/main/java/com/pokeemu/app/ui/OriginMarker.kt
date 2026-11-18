@@ -19,7 +19,8 @@ class Origins(context: Context) {
     private val ledger = OriginLedger(File(context.filesDir, "global-pc/origins.txt"))
 
     /** e.g. "Odyssey v4.1 (FireRed version)"; null if nothing is known. */
-    fun describe(mon: Mon): String? = ledger.describe(mon)
+    fun describe(mon: Mon, currentGame: String? = null, fileExtension: String? = null): String? =
+        ledger.describe(mon, currentGame, fileExtension)
 
     /** True if [mon] came from a game other than [gameName] (whose Pokémon use [fileExtension]). */
     fun isForeign(mon: Mon, gameName: String, fileExtension: String): Boolean {

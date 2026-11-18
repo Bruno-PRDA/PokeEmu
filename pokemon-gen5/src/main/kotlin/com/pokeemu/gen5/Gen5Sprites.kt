@@ -10,7 +10,7 @@ import com.pokeemu.gen4.RomSource
  * Pokémon pictures from Black/White/Black 2/White 2: a/0/0/4 holds 20 files
  * per species (pictures, animation data, then the normal and shiny palettes).
  */
-class Gen5Sprites private constructor(private val fs: NdsFileSystem) : SpriteSource {
+class Gen5Sprites private constructor(private val fs: NdsFileSystem, private val rom: RomSource) : SpriteSource {
     private val narc: LazyNarc? by lazy { runCatching { fs.openNarc(SPRITES) }.getOrNull() }
 
     override fun pokemon(species: Int, shiny: Boolean): Picture? = synchronized(this) {
@@ -28,13 +28,47 @@ class Gen5Sprites private constructor(private val fs: NdsFileSystem) : SpriteSou
         return compose(multi, anims, cells, sheet, palette)
     }
 
-    override fun item(item: Int): Picture? = null
+    private val itemNarc: LazyNarc? by lazy { runCatching { fs.openNarc(ITEM_ICONS) }.getOrNull() }
+    private val itemTable: ByteArray? by lazy { itemNarc?.let { runCatching { itemTable(com.pokeemu.gen4.Arm9.read(rom), it.size) }.getOrNull() } }
+
+    /** Item icons: picture/palette pairs in a/0/2/5, found through the game code's (icon, palette) table. */
+    override fun item(item: Int): Picture? = synchronized(this) {
+        val n = itemNarc ?: return null
+        val table = itemTable ?: return null
+        if (item <= 0 || 4 * item + 4 > table.size) return null
+        val icon = table.u16(4 * item)
+        val pal = table.u16(4 * item + 2)
+        if (icon >= n.size || pal >= n.size) return null
+        val pixels = com.pokeemu.gen4.Gen4Sprites.ncgrPixels(n[icon]) ?: return null
+        val palette = palette(n[pal]) ?: return null
+        return Picture.fromTiles(pixels, palette, 4, 4)
+    }
 
     companion object {
         private const val SPRITES = "a/0/0/4"
         private const val PER_SPECIES = 20
 
-        fun open(rom: RomSource) = Gen5Sprites(NdsFileSystem(rom))
+        private const val ITEM_ICONS = "a/0/2/5"
+
+        fun open(rom: RomSource) = Gen5Sprites(NdsFileSystem(rom), rom)
+
+        /**
+         * The ARM9 table of (u16 icon, u16 palette) per item: item 0 is the "?" icon
+         * (a file near the end), then items 1, 2, 3 are (2, 3), (4, 5), (6, 7).
+         */
+        internal fun itemTable(arm9: ByteArray, files: Int): ByteArray? {
+            var i = 4
+            while (i + 16 <= arm9.size) {
+                if ((1..3).all { k -> arm9.u16(i + 4 * k) == 2 * k && arm9.u16(i + 4 * k + 2) == 2 * k + 1 } &&
+                    arm9.u16(i) in 2 until files && arm9.u16(i + 2) in 2 until files) {
+                    var n = 1
+                    while (i + 4 * (n + 1) <= arm9.size && arm9.u16(i + 4 * n) in 2 until files && arm9.u16(i + 4 * n + 2) in 2 until files && n < 4096) n++
+                    return arm9.copyOfRange(i, i + 4 * n)
+                }
+                i += 2
+            }
+            return null
+        }
 
         /** First 16 colours of an NCLR ("RLCN") file. */
         internal fun palette(b: ByteArray): IntArray? {

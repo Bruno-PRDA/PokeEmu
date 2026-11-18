@@ -156,7 +156,7 @@ fun EditorScreen(rom: RomEntry, onBack: () -> Unit) {
                 onCancel = { detail = null },
                 onDelete = { act { it.delete(detailSlot) }; detail = null },
                 onExport = { exportSlot = detailSlot; exportLauncher.launch("${e.data.speciesName(pk.species)}.${e.fileExtension}") },
-                origin = origins.describe(pk),
+                origin = origins.describe(pk, rom.name, e.fileExtension),
                 sprites = sprites,
             )
             return

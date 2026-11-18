@@ -44,6 +44,8 @@ android {
 }
 
 dependencies {
+    testImplementation(kotlin("test"))
+    testImplementation("junit:junit:4.13.2")
     implementation(project(":core-host"))
     implementation(project(":saves"))
     implementation(project(":pokemon-gen3"))

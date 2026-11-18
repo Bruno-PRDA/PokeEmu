@@ -126,7 +126,7 @@ class Gen4Sprites private constructor(
         }
 
         /** The pixel data of an NCGR ("RGCN") file. */
-        internal fun ncgrPixels(b: ByteArray): ByteArray? {
+        fun ncgrPixels(b: ByteArray): ByteArray? {
             if (b.size < 0x30 || b[0] != 'R'.code.toByte() || b[1] != 'G'.code.toByte()) return null
             val size = b.u32(0x28).toInt()
             val offset = 0x18 + b.u32(0x2C).toInt()

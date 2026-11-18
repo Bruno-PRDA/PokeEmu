@@ -32,6 +32,10 @@ class Gen5ProbeTest {
                 }
             }
             FileRomSource(f).use { rom ->
+                val fixes = Gen5Evolutions.tradeFixes(rom) { data.itemName(it) }
+                println("   evolve without trading: ${fixes.size} changes: " + fixes.joinToString { "${data.speciesName(it.species)} → ${data.speciesName(it.target)}: ${it.how}" })
+            }
+            FileRomSource(f).use { rom ->
                 val fs = NdsFileSystem(rom)
                 val sp = fs.openNarc("a/0/0/4")
                 println("   a/0/0/4: ${sp?.size} files")
@@ -42,7 +46,8 @@ class Gen5ProbeTest {
                 if (sp != null) for (i in listOf(26, 27)) println("     ncer#$i " + sp[i].joinToString(" ") { "%02x".format(it) })
                 val sprites = Gen5Sprites.open(rom)
                 val ids = listOf("Bulbasaur", "Charizard", "Pikachu", "Snivy", "Zekrom", "Genesect").map { n -> data.speciesNames.indexOfFirst { it.equals(n, true) } }
-                System.getenv("PROBE_OUT")?.let { out -> probeSheet5(File(out, "gen5-" + f.nameWithoutExtension + ".png"), ids.flatMap { listOf(sprites.pokemon(it, false), sprites.pokemon(it, true)) }) }
+                System.getenv("PROBE_OUT")?.let { out -> probeSheet5(File(out, "gen5-" + f.nameWithoutExtension + ".png"), ids.flatMap { listOf(sprites.pokemon(it, false), sprites.pokemon(it, true)) } +
+                    listOf("Master Ball", "Potion", "Leftovers", "Rare Candy", "Fire Stone", "Protector", "Dragon Scale").map { n -> sprites.item(data.itemNames.indexOfFirst { it.equals(n, true) }) }) }
             }
             if (false) FileRomSource(f).use { rom ->
                 val fs = NdsFileSystem(rom)

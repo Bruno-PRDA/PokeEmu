@@ -19,7 +19,12 @@ object EvolutionCheat {
     /** The changes for this game, each with a description ("Kadabra → Alakazam: level 36"). */
     suspend fun changes(context: Context, rom: File, romId: String, ds: Boolean): List<Pair<EvoFix, String>> = withContext(Dispatchers.IO) {
         val store = RomDataStore(GameStorage(context.filesDir))
-        if (ds) {
+        val gen5 = ds && com.pokeemu.saves.NdsHeader.parse(rom.inputStream().use { i -> ByteArray(com.pokeemu.saves.NdsHeader.HEADER_SIZE).also { i.read(it) } })?.pokemonGen == 5
+        if (gen5) {
+            val data = store.gen5(romId, rom) ?: return@withContext emptyList()
+            FileRomSource(rom).use { com.pokeemu.gen5.Gen5Evolutions.tradeFixes(it) { id -> data.itemName(id) } }
+                .map { it to "${data.speciesName(it.species)} → ${data.speciesName(it.target)}: ${it.how}" }
+        } else if (ds) {
             val data = store.gen4(romId, rom) ?: return@withContext emptyList()
             FileRomSource(rom).use { Gen4Evolutions.tradeFixes(it, data.itemNames, data::speciesName) }
                 .map { it to "${data.speciesName(it.species)} → ${data.speciesName(it.target)}: ${it.how}" }

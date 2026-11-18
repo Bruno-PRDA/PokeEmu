@@ -76,6 +76,10 @@ interface Mon {
     val otName: String
     /** Game of origin id (see GameVersions); 0 if unknown. */
     val originVersion: Int get() = 0
+    /** Where it was met (the game's location number); 0 if unknown. */
+    val metLocation: Int get() = 0
+    /** Level it was met at; 0 for a hatched egg, -1 if unknown. */
+    val metLevel: Int get() = -1
     val checksumValid: Boolean
     val moves: List<Int>
     fun move(i: Int): Int

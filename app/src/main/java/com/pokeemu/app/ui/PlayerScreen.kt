@@ -277,7 +277,6 @@ fun PauseMenu(
     onSpeed: (Int) -> Unit,
     onSaveState: () -> Unit,
     onLoadState: () -> Unit,
-    onReset: () -> Unit,
     onQuit: () -> Unit,
     onDismiss: () -> Unit,
     onCheats: () -> Unit = {},
@@ -293,6 +292,9 @@ fun PauseMenu(
     muted: Boolean = false,
     onVolume: (Float) -> Unit = {},
     onMute: (Boolean) -> Unit = {},
+    /** Whether to offer the quit-time state when the game starts. */
+    askContinue: Boolean = true,
+    onAskContinue: (Boolean) -> Unit = {},
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -335,11 +337,17 @@ fun PauseMenu(
                         }
                     }
                 }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Offer \"Continue\" on launch", style = MaterialTheme.typography.labelLarge)
+                        Text("Ask to load the state saved when you quit", style = MaterialTheme.typography.bodySmall)
+                    }
+                    androidx.compose.material3.Switch(checked = askContinue, onCheckedChange = onAskContinue)
+                }
                 FilledTonalButton(onClick = onCheats, Modifier.fillMaxWidth()) { Text("Cheats") }
                 if (onChallenges != null) FilledTonalButton(onClick = onChallenges, Modifier.fillMaxWidth()) { Text("Challenges") }
                 FilledTonalButton(onClick = onEditControls, Modifier.fillMaxWidth()) { Text("Edit controls") }
                 FilledTonalButton(onClick = onSetCover, Modifier.fillMaxWidth()) { Text("Use this screen as cover") }
-                FilledTonalButton(onClick = onReset, Modifier.fillMaxWidth()) { Text("Reset game") }
                 FilledTonalButton(onClick = onQuit, Modifier.fillMaxWidth()) { Text("Quit to library") }
             }
         },
@@ -406,8 +414,8 @@ fun ResumePrompt(onContinue: () -> Unit, onFresh: () -> Unit) {
     AlertDialog(
         onDismissRequest = onFresh,
         title = { Text("Continue where you left off?") },
-        text = { Text("Load the state saved when you last quit. Choose \"Boot game\" to start from your in-game save instead.") },
-        confirmButton = { TextButton(onClick = onContinue) { Text("Continue") } },
-        dismissButton = { TextButton(onClick = onFresh) { Text("Boot game") } },
+        text = { Text("\"Boot game\" starts from your in-game save. \"Continue\" loads the state saved when you last quit. You can turn this question off in the pause menu.") },
+        confirmButton = { TextButton(onClick = onFresh) { Text("Boot game") } },
+        dismissButton = { TextButton(onClick = onContinue) { Text("Continue") } },
     )
 }

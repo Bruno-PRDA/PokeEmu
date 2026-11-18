@@ -12,6 +12,14 @@ object GameVersions {
     )
 
     fun name(id: Int): String? = names[id]
+
+    /** True if a game of origin [id] belongs to the generation whose Pokémon files are [fileExtension]. */
+    fun isNative(id: Int, fileExtension: String): Boolean = when (fileExtension) {
+        "pk3" -> id in 1..5 || id == 15
+        "pk4" -> id in setOf(7, 8, 10, 11, 12)
+        "pk5" -> id in 20..23
+        else -> false
+    }
 }
 
 /**
@@ -45,10 +53,15 @@ class OriginLedger(private val file: File) {
         return map.getValue(key(mon))
     }
 
-    /** "Odyssey v4.1 (FireRed version)", "FireRed version", or null if nothing is known. */
-    fun describe(mon: Mon): String? {
-        val game = get(mon)
+    /**
+     * "Odyssey v4.1 (FireRed version)", "FireRed version", or null if nothing is known.
+     * With no record, a Pokémon whose game of origin is of the generation it's being
+     * viewed in ([fileExtension]) was caught in a game like [currentGame]: a hack
+     * only stores its base game, so name the hack it's in.
+     */
+    fun describe(mon: Mon, currentGame: String? = null, fileExtension: String? = null): String? {
         val version = GameVersions.name(mon.originVersion)?.let { "$it version" }
+        val game = get(mon) ?: currentGame?.takeIf { fileExtension != null && GameVersions.isNative(mon.originVersion, fileExtension) }
         return when {
             game != null && version != null && !game.contains(version.removeSuffix(" version"), ignoreCase = true) -> "$game ($version)"
             game != null -> game

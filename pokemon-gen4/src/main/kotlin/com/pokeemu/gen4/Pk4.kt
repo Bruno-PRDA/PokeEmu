@@ -112,8 +112,10 @@ class Pk4(raw: ByteArray) : Mon {
     fun setNickname(text: String) = Gen4Text.encode(text, 11).copyInto(plain, 0x48)
     override val otName: String get() = Gen4Text.decode(plain, 0x68, 8)
     override val originVersion: Int get() = plain.u8(0x5F)
+    /** Platinum/HGSS keep the met location at 0x46; Diamond/Pearl (and the fallback for old places) at 0x7E. */
+    override val metLocation: Int get() = plain.u16(0x46).takeIf { it != 0 } ?: plain.u16(0x7E)
     /** Met level (low 7 bits of 0x84; bit 7 is the OT's gender). */
-    var metLevel: Int
+    override var metLevel: Int
         get() = plain.u8(0x84) and 0x7F
         set(v) { plain[0x84] = ((plain.u8(0x84) and 0x80) or v.coerceIn(0, 100)).toByte() }
 

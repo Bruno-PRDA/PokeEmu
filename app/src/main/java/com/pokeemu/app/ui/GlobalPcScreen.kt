@@ -239,7 +239,7 @@ fun GlobalPcScreen(games: List<RomEntry>, onBack: () -> Unit) {
             text = {
                 Text(
                     "It leaves ${game?.name}. You can move it into this or any other game later." +
-                        (origins.describe(mon)?.let { "\n\nOrigin: $it" } ?: ""),
+                        (origins.describe(mon, game?.name, o.editor.fileExtension)?.let { "\n\nOrigin: $it" } ?: ""),
                 )
             },
             confirmButton = { TextButton(onClick = { deposit = null; doDeposit(slot) }) { Text("Move") } },

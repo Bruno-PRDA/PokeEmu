@@ -48,6 +48,7 @@ fun ChallengesScreen(title: String, store: ChallengeStore, onBack: () -> Unit, o
     var odds by remember { mutableStateOf(store.shinyOdds) }
     var nuzlocke by remember { mutableStateOf(store.nuzlocke) }
     var log by remember { mutableStateOf(store.log().asReversed()) }
+    var areas by remember { mutableStateOf(store.areas()) }
 
     BackHandler(onBack = onBack)
     Scaffold(
@@ -93,9 +94,23 @@ fun ChallengesScreen(title: String, store: ChallengeStore, onBack: () -> Unit, o
                         }
                         Text(
                             "Keeps a log of your encounters and team. A Pokémon that faints is marked dead, and you're warned " +
-                                "if it's still in your party when a battle starts. The rest is up to you: one catch per area, nickname everything.",
+                                "if it's still in your party when a battle starts. Areas are tracked from where each Pokémon is met: " +
+                                "the first one in an area is its encounter, and you're told when you meet or catch another there.",
                             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                    }
+                }
+            }
+            if (areas.isNotEmpty()) {
+                item { Text("Areas", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary) }
+                items(areas.sortedBy { it.place }) { a ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(if (a.caught) "✅" else "🌿", Modifier.padding(end = 10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(a.place, style = MaterialTheme.typography.bodyMedium)
+                            Text(if (a.caught) a.text else "${a.text} (not caught)", style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                     }
                 }
             }
@@ -103,7 +118,7 @@ fun ChallengesScreen(title: String, store: ChallengeStore, onBack: () -> Unit, o
                 item {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("Log", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
-                        TextButton(onClick = { store.clearLog(); log = emptyList(); onChanged() }) { Text("Clear") }
+                        TextButton(onClick = { store.clearLog(); log = emptyList(); areas = emptyList(); onChanged() }) { Text("Clear") }
                     }
                 }
                 items(log) { e ->

@@ -87,6 +87,7 @@ class PlayerActivity : ComponentActivity() {
     /** Game volume (0..1) and mute, the same for every game. */
     private var volume by mutableStateOf(1f)
     private var muted by mutableStateOf(false)
+    private var askContinue by mutableStateOf(true)
 
     /** A curve so the slider's middle sounds like half as loud. */
     private fun applyVolume() { session?.setVolume(if (muted) 0f else volume * volume) }
@@ -166,7 +167,6 @@ class PlayerActivity : ComponentActivity() {
                         },
                         onSaveState = { refreshSlots(); showDialog(Dialog.SAVE_STATE) },
                         onLoadState = { refreshSlots(); showDialog(Dialog.LOAD_STATE) },
-                        onReset = { session?.reset(); showDialog(Dialog.NONE) },
                         onQuit = { finish() },
                         onDismiss = { showDialog(Dialog.NONE) },
                         onCheats = { showDialog(Dialog.CHEATS) },
@@ -184,6 +184,11 @@ class PlayerActivity : ComponentActivity() {
                             muted = it
                             applyVolume()
                             saveSetting { putBoolean(PREF_MUTED, it) }
+                        },
+                        askContinue = askContinue,
+                        onAskContinue = {
+                            askContinue = it
+                            saveSetting { putBoolean(PREF_ASK_CONTINUE, it) }
                         },
                         dsLayout = if (isDs) dsLayout else null,
                         onDsLayout = { l ->
@@ -297,11 +302,17 @@ class PlayerActivity : ComponentActivity() {
             volume = prefs.getFloat(PREF_VOLUME, 1f)
             muted = prefs.getBoolean(PREF_MUTED, false)
             applyVolume()
-            if (pokemonTools) startChallenges(id)
+            if (pokemonTools) {
+                val gen = ndsHeader?.pokemonGen ?: 3
+                lifecycleScope.launch(Dispatchers.IO) { places = RomDataStore(storage).locations(id, local.file, gen) }
+                startChallenges(id)
+            }
             session!!.start()
             ready = true
-            if (storage.readState(id, GameStorage.AUTO_SLOT) != null) showDialog(Dialog.RESUME_PROMPT)
+            askContinue = prefs.getBoolean(PREF_ASK_CONTINUE, true)
+            if (askContinue && storage.readState(id, GameStorage.AUTO_SLOT) != null) showDialog(Dialog.RESUME_PROMPT)
             if (!pokemonTools) Unit
+            else if (ndsHeader?.pokemonGen == 5) prepareGen5Overlay(id, local.file)
             else if (isDs) prepareDsOverlay(id, local.file)
             else prepareOverlay(id, withContext(Dispatchers.IO) { local.file.readBytes() }) // GBA: <= 32 MB
         } catch (e: Exception) {
@@ -365,7 +376,29 @@ class PlayerActivity : ComponentActivity() {
         }
     }
 
+    private fun prepareGen5Overlay(id: String, romFile: java.io.File) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            val data = RomDataStore(storage).gen5(id, romFile)
+            val trainer = runCatching { com.pokeemu.gen5.Gen5Save.parse(storage.saveFile(id).readBytes()).trainer }.getOrNull()
+            val reader = com.pokeemu.gen5.Gen5LiveReader(
+                trainerId = trainer?.trainerId,
+                secretId = trainer?.secretId,
+                speciesCount = data?.speciesNames?.size?.takeIf { it > 0 } ?: 2048,
+                moveCount = data?.moveNames?.size?.takeIf { it > 0 } ?: 1024,
+            )
+            val gen5Sprites = runCatching { com.pokeemu.gen5.Gen5Sprites.open(com.pokeemu.gen4.FileRomSource(romFile)) }.getOrNull()
+            withContext(Dispatchers.Main) {
+                romData = data
+                sprites = gen5Sprites
+                liveRam = com.pokeemu.gen5.Gen5LiveReader.RAM_ADDRESS to com.pokeemu.gen5.Gen5LiveReader.RAM_SIZE
+                liveReader = reader::read
+            }
+        }
+    }
+
     private var challengeRunner: ChallengeRunner? = null
+    /** Location number -> place name for this game (Nuzlocke areas); loaded in the background. */
+    @Volatile private var places: Map<Int, String> = emptyMap()
 
     /** False for DS games the Pokemon tools don't understand (Black, White...): they only play. */
     private var pokemonTools by mutableStateOf(true)
@@ -380,6 +413,7 @@ class PlayerActivity : ComponentActivity() {
             data = { romData },
             write = { offset, bytes -> session?.writeBus(liveRam.first + offset, bytes) == true },
             notify = { msg -> android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_LONG).show() },
+            places = { places },
         )
         challengeRunner = runner
         lifecycleScope.launch {
@@ -569,6 +603,7 @@ class PlayerActivity : ComponentActivity() {
         private const val CHALLENGE_REFRESH_MS = 300L
         private const val PREF_VOLUME = "volume"
         private const val PREF_MUTED = "muted"
+        private const val PREF_ASK_CONTINUE = "ask_continue"
         private const val EXTRA_URI = "uri"
         private const val OVERLAY_REFRESH_MS = 500L
         private const val EXTRA_NAME = "name"

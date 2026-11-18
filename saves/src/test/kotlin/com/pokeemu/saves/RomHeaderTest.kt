@@ -54,11 +54,11 @@ class RomHeaderTest {
         fun ds(code: String) = RomHeader("POKEMON", code, "01", 0, Platform.NDS)
         assertTrue(RomHeader("POKEMON FIRE", "BPRE", "01", 0).pokemonTools)
         for (code in listOf("ADAE", "APAE", "CPUE", "IPKE", "IPGE", "IPKJ")) assertTrue(ds(code).pokemonTools, code)
-        // Black, White, Black 2, White 2: the editor works, the memory tools (overlay, challenges) not yet.
+        // Black, White, Black 2, White 2: the editor and the memory tools (overlay, challenges).
         for (code in listOf("IRBO", "IRAO", "IREO", "IRDO")) {
             assertTrue(ds(code).pokemonTools, code)
             assertEquals(5, ds(code).pokemonGen, code)
-            assertFalse(ds(code).liveTools, code)
+            assertTrue(ds(code).liveTools, code)
         }
         // Other DS games only play.
         assertFalse(ds("AMCE").pokemonTools)
