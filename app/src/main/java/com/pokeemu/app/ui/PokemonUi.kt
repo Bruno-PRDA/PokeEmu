@@ -67,9 +67,21 @@ private fun PixelImage(key: String, size: Dp, modifier: Modifier, unit: Int? = n
 
 /** A Pokémon's front sprite from its game's ROM (blank while loading or if not found). */
 @Composable
-fun MonSprite(sprites: SpriteSource?, species: Int, shiny: Boolean, size: Dp, modifier: Modifier = Modifier) {
+fun MonSprite(sprites: SpriteSource?, species: Int, shiny: Boolean, size: Dp, modifier: Modifier = Modifier, fit: Boolean = false) {
     if (sprites == null || species <= 0) { Box(modifier.size(size)); return }
-    PixelImage("${System.identityHashCode(sprites)}/p$species/${if (shiny) "s" else "n"}", size, modifier, unit = 64) { sprites.pokemon(species, shiny) }
+    val key = "${System.identityHashCode(sprites)}/p$species/${if (shiny) "s" else "n"}"
+    // [fit]: margins trimmed and the Pokémon fitted to the box (PC spots, like the games' box icons).
+    if (fit) PixelImage("$key/fit", size * 0.9f, modifier) { sprites.pokemon(species, shiny)?.trimmed()?.squared() }
+    else PixelImage(key, size, modifier, unit = 64) { sprites.pokemon(species, shiny) }
+}
+
+/** This picture centred on a square canvas (so fitting it keeps its shape). */
+fun Picture.squared(): Picture {
+    val n = maxOf(width, height)
+    val out = IntArray(n * n)
+    val dx = (n - width) / 2; val dy = n - height // stand it on the bottom
+    for (y in 0 until height) for (x in 0 until width) out[(y + dy) * n + x + dx] = argb[y * width + x]
+    return Picture(n, n, out)
 }
 
 /** An item's icon from the game's ROM. */
