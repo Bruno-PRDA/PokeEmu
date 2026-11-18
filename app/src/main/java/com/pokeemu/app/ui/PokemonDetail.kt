@@ -256,6 +256,8 @@ private fun SummaryTab(pk: Mon, editor: MonEditor, rom: GameData, origin: String
             "Species", rom.speciesNames, allowZero = false,
             onPick = { id -> picker = null; edit { editor.setSpecies(pk, id) } }, onDismiss = { picker = null },
             leading = { id -> MonSprite(sprites, id, false, 40.dp) },
+            // Only species this game really has (hacks keep named slots with no data).
+            allowed = { id -> com.pokeemu.core.Transfer.isRealSpecies(rom, id) },
         )
         "item" -> IdPicker(
             "Held item", rom.itemNames, allowZero = true,

@@ -158,24 +158,24 @@ object Transfer {
             "${stored.speciesName} is from a ${generationLabel(stored.format)} game and can't go back to a ${generationLabel(editor.fileExtension)} game"
         }
         val mon = editor.parseImport(converter?.convert?.invoke(stored.bytes) ?: stored.bytes)
-        if (converter == null && stored.fromRomId == targetRomId) return Result(mon, emptyList())
+        if (converter == null && stored.fromRomId == targetRomId) {
+            requireSupported(mon, editor.data)
+            return Result(mon, emptyList())
+        }
 
         val data = editor.data
         val notes = mutableListOf<String>()
 
-        // Species: must exist in the target game under the same name.
-        val species = find(data.speciesNames, stored.speciesName)
-        require(species != null || converter == null) { "${stored.speciesName} isn't in this game" }
-        if (species == null) {
-            require(data.speciesNames.isEmpty() || isNumbered(stored.speciesName)) {
-                "${stored.speciesName} isn't in this game"
-            }
-            require(data.speciesNames.isEmpty() || mon.species < data.speciesNames.size) {
-                "${stored.speciesName} isn't in this game"
-            }
-        } else if (species != mon.species) {
-            mon.species = species
+        // Species: must exist in the target game under the same name. Hacks number species
+        // (and fakemon) their own way, so a number alone never says which Pokémon it is.
+        require(data.speciesNames.isNotEmpty()) {
+            "This game's Pokémon names couldn't be read from its ROM, so ${stored.speciesName} can't be checked and isn't moved in"
         }
+        require(!isNumbered(stored.speciesName)) {
+            "${stored.speciesName}'s species is unknown (its game's names couldn't be read), so it can only go back to that game"
+        }
+        val species = requireNotNull(find(data.speciesNames, stored.speciesName)) { "${stored.speciesName} isn't in this game" }
+        if (species != mon.species) mon.species = species
 
         // Moves: matched by name; ones this game doesn't have are dropped.
         if (data.moveNames.isNotEmpty() && stored.moveNames.none(::isNumbered)) {
@@ -207,15 +207,44 @@ object Transfer {
 
         if (converter != null) {
             notes += converter.finish(mon, editor, stored)
-            return Result(mon, notes)
+        } else {
+            // Ability: keep the same slot if the species has it, else its first ability.
+            val options = runCatching { editor.abilityOptions(mon) }.getOrDefault(emptyList())
+            if (options.isNotEmpty() && editor.abilityIndex(mon) < 0) editor.setAbility(mon, 0)
         }
-
-        // Ability: keep the same slot if the species has it, else its first ability.
-        val options = runCatching { editor.abilityOptions(mon) }.getOrDefault(emptyList())
-        if (options.isNotEmpty() && editor.abilityIndex(mon) < 0) editor.setAbility(mon, 0)
-
+        requireSupported(mon, data)
         return Result(mon, notes)
     }
+
+    /**
+     * Throws (with a message for the user) unless [data]'s game can hold [mon]: its
+     * species must be a real entry of that ROM (not a blank or "-----" slot) with base
+     * data when the ROM has any, and its moves and item must exist there. Guards every
+     * way a Pokémon gets into a game (transfers, imported files).
+     */
+    fun requireSupported(mon: Mon, data: GameData) {
+        val names = data.speciesNames
+        require(names.isNotEmpty()) { "This game's Pokémon names couldn't be read from its ROM, so nothing can be checked or moved in" }
+        require(isRealSpecies(data, mon.species)) { "Species #${mon.species} doesn't exist in this game" }
+        if (data.moveNames.isNotEmpty()) mon.moves.firstOrNull { it >= data.moveNames.size }?.let {
+            throw IllegalArgumentException("${data.speciesName(mon.species)} knows a move this game doesn't have (#$it)")
+        }
+        if (data.itemNames.isNotEmpty()) require(mon.heldItem < data.itemNames.size) {
+            "${data.speciesName(mon.species)} holds an item this game doesn't have (#${mon.heldItem})"
+        }
+    }
+
+    /**
+     * A species this game really has: a named entry (not blank, "-----" or "?????"),
+     * with base data when the ROM has base data at all (hacks leave named but empty slots).
+     */
+    fun isRealSpecies(data: GameData, species: Int): Boolean {
+        val names = data.speciesNames
+        if (species !in 1 until names.size || normalize(names[species]).isEmpty()) return false
+        return !hasBaseStats(data) || data.base(species) != null
+    }
+
+    private fun hasBaseStats(data: GameData) = (1 until minOf(data.speciesNames.size, 30)).any { data.base(it) != null }
 
     /** "GBA", "Gen 4 DS", "Gen 5 DS" for a record format. */
     fun generationLabel(format: String) = when (format) {

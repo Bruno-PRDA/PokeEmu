@@ -179,4 +179,52 @@ class GlobalPcTest {
         assertEquals(1, Transfer.find(listOf("-", "Nidoran♀", "Nidoran♂"), "NIDORAN♀"))
         assertEquals(1, Transfer.find(listOf("-", "Flabébé"), "FLABEBE"))
     }
+
+    /** A hack with a fakemon (#20 "Flarebit") and a named slot it never filled (#21, no data). */
+    private val fakemonHack = RomData(
+        speciesNames = List(30) { "MON$it" }.toMutableList().apply { this[25] = "PIKACHU"; this[20] = "Flarebit"; this[21] = "Unused" },
+        moveNames = List(100) { "MOVE$it" }, abilityNames = List(10) { "AB$it" },
+        itemNames = List(10) { "IT$it" },
+        baseStats = List(30) { if (it > 0 && it != 21) base else null }, movePp = List(100) { 10 }, report = emptyList(),
+    )
+
+    @Test fun aFakemonCantGoIntoAGameWithoutIt() {
+        val src = editor(fakemonHack, boxed = pikachu(party = false).apply { species = 20 })
+        val stored = pc().deposit(src, src[Slot.Box(0, 0)]!!, "Some hack", "rom-f")
+        assertEquals("Flarebit", stored.speciesName)
+        val e = assertFailsWith<IllegalArgumentException> { Transfer.adapt(stored, editor(vanilla), "rom-a") }
+        assertTrue("Flarebit" in e.message!!)
+        // Back into its own game it's fine.
+        assertEquals(20, Transfer.adapt(stored, editor(fakemonHack), "rom-f").mon.species)
+    }
+
+    @Test fun namedSlotsWithoutDataArentRealSpecies() {
+        assertTrue(Transfer.isRealSpecies(fakemonHack, 20))
+        assertTrue(!Transfer.isRealSpecies(fakemonHack, 21), "named, but no base data in the ROM")
+        assertTrue(!Transfer.isRealSpecies(fakemonHack, 0))
+        assertTrue(!Transfer.isRealSpecies(fakemonHack, 30), "past the end of the table")
+        val placeholders = vanilla.copy(speciesNames = vanilla.speciesNames.toMutableList().apply { this[5] = "-----"; this[6] = "??????" })
+        assertTrue(!Transfer.isRealSpecies(placeholders, 5))
+        assertTrue(!Transfer.isRealSpecies(placeholders, 6))
+    }
+
+    @Test fun importedFilesAreCheckedAgainstTheGame() {
+        // A file from a bigger hack: species #28 exists there, not in a 25-species game.
+        val small = vanilla.copy(speciesNames = vanilla.speciesNames.take(26))
+        val mon = pikachu(party = false).apply { species = 28 }
+        assertFailsWith<IllegalArgumentException> { Transfer.requireSupported(mon, small) }
+        val badMove = pikachu(party = false).apply { setMove(2, 150) }
+        assertFailsWith<IllegalArgumentException> { Transfer.requireSupported(badMove, vanilla) }
+        Transfer.requireSupported(pikachu(party = false), vanilla) // a normal one passes
+    }
+
+    @Test fun gamesWhoseNamesWerentReadTakeNothingFromOtherGames() {
+        val src = editor(vanilla, boxed = pikachu(party = false))
+        val stored = pc().deposit(src, src[Slot.Box(0, 0)]!!, "Emerald", "rom-a")
+        val unreadable = vanilla.copy(speciesNames = emptyList())
+        assertFailsWith<IllegalArgumentException> { Transfer.adapt(stored, editor(unreadable), "rom-z") }
+        // And a Pokémon whose own game's names weren't read only goes back there.
+        val numbered = stored.copy(speciesName = "#25")
+        assertFailsWith<IllegalArgumentException> { Transfer.adapt(numbered, editor(vanilla), "rom-b") }
+    }
 }

@@ -111,7 +111,12 @@ fun EditorScreen(rom: RomEntry, onBack: () -> Unit) {
         if (uri == null || target == null) return@rememberLauncherForActivityResult
         val bytes = runCatching { context.contentResolver.openInputStream(uri)!!.use { it.readBytes() } }.getOrNull()
             ?: run { toast("Couldn't read that file"); return@rememberLauncherForActivityResult }
-        act { it.insert(target, it.parseImport(bytes)) }
+        act {
+            val mon = it.parseImport(bytes)
+            // A file from another game (or hack) may hold a species, move or item this one doesn't have.
+            com.pokeemu.core.Transfer.requireSupported(mon, it.data)
+            it.insert(target, mon)
+        }
     }
 
     fun save() {

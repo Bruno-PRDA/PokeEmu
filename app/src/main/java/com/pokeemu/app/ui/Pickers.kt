@@ -42,12 +42,14 @@ fun IdPicker(
     onDismiss: () -> Unit,
     /** Optional picture before each entry (sprite, item icon). */
     leading: (@Composable (Int) -> Unit)? = null,
+    /** Which ids may be offered (e.g. species the game really has); all by default. */
+    allowed: (Int) -> Boolean = { true },
 ) {
     var query by remember { mutableStateOf("") }
     val entries = remember(names, allowZero) {
         val none = if (allowZero) listOf(0 to "(none)") else emptyList()
         // Skip index 0 and placeholder entries like "??????????" / "-------".
-        none + names.mapIndexedNotNull { id, name -> if (id == 0 || name.isBlank() || name.all { it == '?' || it == '-' }) null else id to name }
+        none + names.mapIndexedNotNull { id, name -> if (id == 0 || name.isBlank() || name.all { it == '?' || it == '-' } || !allowed(id)) null else id to name }
     }
     val filtered = remember(query, entries) {
         val q = query.trim()
