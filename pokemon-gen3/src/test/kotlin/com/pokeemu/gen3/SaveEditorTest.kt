@@ -114,6 +114,28 @@ class SaveEditorTest {
         assertTrue(w.any { "EVs total" in it })
         assertTrue(w.any { "Move #999" in it })
     }
+
+    @Test fun newPokemonIsTheTrainersOwnAndSurvivesASave() {
+        val e = editor(mon(25, 10, 1))
+        val pk = e.create(26, 30) as Pk3
+        assertTrue(pk.checksumValid)
+        assertEquals(26, pk.species)
+        assertEquals(30, GameRules.levelForExp(0, pk.experience))
+        assertEquals(12345, pk.trainerId)
+        assertEquals(54321, pk.secretId)
+        assertEquals(30, pk.metLevel)
+        assertEquals(4, pk.ball)
+        assertEquals("RAICHU", pk.nickname)
+        assertTrue(pk.ivs.all { it in 0..31 })
+        assertEquals(1, pk.move(0), "no learnsets in this ROM: Pound")
+        e.insert(Slot.Party(1), pk)
+        val back = Gen3Save.parse(e.toBytes()).party
+        assertEquals(2, back.size)
+        assertEquals(26, back[1].species)
+        assertEquals(30, back[1].level)
+        assertTrue(back[1].checksumValid)
+        assertFailsWith<IllegalArgumentException> { e.create(0, 5) }
+    }
 }
 
 /** Minimal valid Emerald save with a given party. */

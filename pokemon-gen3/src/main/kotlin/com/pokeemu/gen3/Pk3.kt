@@ -87,6 +87,19 @@ class Pk3(raw: ByteArray, val encoding: Pk3Encoding = Pk3Encoding.STANDARD) : Mo
     override val otName: String get() = Gen3Text.decode(bytes, 0x14, 7)
     val language: Int get() = bytes.u8(0x12)
 
+    /** Sets the trainer name, language and the "has species" flag of a newly made Pokémon. */
+    fun setHeader(otName: String, language: Int) {
+        Gen3Text.encode(otName, 7).copyInto(bytes, 0x14)
+        bytes[0x12] = language.toByte()
+        bytes[0x13] = 0x02 // has species
+    }
+
+    /** Where, how and by whom it was caught. */
+    fun setOrigins(metLocation: Int, metLevel: Int, game: Int, ball: Int, otFemale: Boolean) {
+        data.put8(37, metLocation)
+        data.put16(38, (metLevel and 0x7F) or ((game and 0xF) shl 7) or ((ball and 0xF) shl 11) or (if (otFemale) 0x8000 else 0))
+    }
+
     /** An all-zero slot (species 0, no personality). */
     val isEmpty: Boolean get() = species == 0 && personality == 0L && otId == 0L
 

@@ -63,6 +63,26 @@ class Gen5SaveEditor(private val save: Gen5Save, override val data: Gen5RomData)
         dirty = true
     }
 
+    override fun create(species: Int, level: Int): Mon {
+        val t = save.trainer
+        val own = party.firstOrNull { it.trainerId == t.trainerId && it.secretId == t.secretId }?.plainBytes()
+        val p = ByteArray(Pk5.BOX_SIZE)
+        p.put32(0, kotlin.random.Random.nextLong(0x1_0000_0000L))
+        p.put16(0x0C, t.trainerId); p.put16(0x0E, t.secretId)
+        p[0x14] = 70
+        p[0x17] = own?.get(0x17) ?: 2
+        p[0x5F] = own?.get(0x5F) ?: 20
+        Pk5.encodeString(t.name, 8).copyInto(p, 0x68)
+        own?.copyInto(p, 0x80, 0x80, 0x82) // met where the player's own Pokémon was
+        val today = java.time.LocalDate.now()
+        p[0x7B] = (today.year - 2000).toByte(); p[0x7C] = today.monthValue.toByte(); p[0x7D] = today.dayOfMonth.toByte()
+        p[0x83] = com.pokeemu.core.NewMon.POKE_BALL.toByte()
+        p[0x84] = (level.coerceIn(1, 100) or ((own?.get(0x84)?.toInt() ?: 0) and 0x80)).toByte()
+        val pk = Pk5.fromPlain(p)
+        com.pokeemu.core.NewMon.fill(this, pk, species, level)
+        return pk
+    }
+
     override fun insert(slot: Slot, mon: Mon) {
         val pk = mon as Pk5
         require(get(slot) == null) { "That slot isn't empty" }

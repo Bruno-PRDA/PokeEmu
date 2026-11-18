@@ -23,6 +23,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -75,6 +76,11 @@ fun EditorScreen(rom: RomEntry, onBack: () -> Unit) {
     var moving by remember { mutableStateOf<Slot?>(null) }
     var detail by remember { mutableStateOf<Slot?>(null) }
     var importTarget by remember { mutableStateOf<Slot?>(null) }
+    /** An empty slot tapped: new Pokémon or import? */
+    var emptySlot by remember { mutableStateOf<Slot?>(null) }
+    /** Making a new Pokémon for this slot: pick its species, then its level. */
+    var newTarget by remember { mutableStateOf<Slot?>(null) }
+    var newSpecies by remember { mutableStateOf<Int?>(null) }
     var exportSlot by remember { mutableStateOf<Slot?>(null) }
     var confirmDiscard by remember { mutableStateOf(false) }
     var showReport by remember { mutableStateOf(false) }
@@ -171,6 +177,12 @@ fun EditorScreen(rom: RomEntry, onBack: () -> Unit) {
                 title = { Text("Edit Pokémon") },
                 navigationIcon = { IconButton(onClick = { if (dirty) confirmDiscard = true else onBack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
                 actions = {
+                    if (e != null) IconButton(onClick = {
+                        // The first free spot: the party if it has room, else the boxes.
+                        val free = if (e.partyMembers.size < 6) Slot.Party(e.partyMembers.size)
+                        else (0 until e.boxCount).firstNotNullOfOrNull { b -> e.box(b).indexOfFirst { it == null }.takeIf { it >= 0 }?.let { Slot.Box(b, it) } }
+                        if (free == null) toast("No free spot: the party and every box are full") else newTarget = free
+                    }) { Icon(Icons.Default.Add, "New Pokémon") }
                     if (e != null) IconButton(onClick = { showReport = true }) { Icon(Icons.Default.Info, "ROM data") }
                     TextButton(onClick = ::save, enabled = dirty && !saving) { Text(if (saving) "Saving…" else "Save") }
                 },
@@ -193,7 +205,7 @@ fun EditorScreen(rom: RomEntry, onBack: () -> Unit) {
             when {
                 from != null -> { moving = null; act { it.move(from, slot) } }
                 e[slot] != null -> detail = slot
-                else -> { importTarget = slot; importLauncher.launch(arrayOf("*/*")) }
+                else -> emptySlot = slot
             }
         }
 
@@ -221,7 +233,7 @@ fun EditorScreen(rom: RomEntry, onBack: () -> Unit) {
                 val slot = Slot.Box(box, i)
                 Cell(e, contents[i], sprites, selected = moving == slot, compact = true, foreign = contents[i]?.let { origins.isForeign(it, rom.name, e.fileExtension) } == true, onClick = { onCell(slot) }, onLongClick = { moving = slot })
             }
-            Text("Tap to edit · long-press to move · tap an empty slot to import a .${e.fileExtension}", style = MaterialTheme.typography.bodySmall)
+            Text("Tap to edit · long-press to move · tap an empty slot to add a Pokémon", style = MaterialTheme.typography.bodySmall)
         }
     }
 
@@ -232,6 +244,56 @@ fun EditorScreen(rom: RomEntry, onBack: () -> Unit) {
         confirmButton = { TextButton(onClick = { confirmDiscard = false; onBack() }) { Text("Discard") } },
         dismissButton = { TextButton(onClick = { confirmDiscard = false }) { Text("Keep editing") } },
     )
+    emptySlot?.let { slot ->
+        AlertDialog(
+            onDismissRequest = { emptySlot = null },
+            title = { Text("Add a Pokémon") },
+            text = { Text("Make a new one, or import a .${e?.fileExtension} file.") },
+            confirmButton = { TextButton(onClick = { emptySlot = null; newTarget = slot }) { Text("New Pokémon") } },
+            dismissButton = { TextButton(onClick = { emptySlot = null; importTarget = slot; importLauncher.launch(arrayOf("*/*")) }) { Text("Import file") } },
+        )
+    }
+    val target = newTarget
+    if (target != null && e != null) {
+        val species = newSpecies
+        if (species == null) IdPicker(
+            "New Pokémon", e.data.speciesNames, allowZero = false,
+            onPick = { newSpecies = it }, onDismiss = { newTarget = null },
+            leading = { id -> MonSprite(sprites, id, false, 40.dp) },
+            // Only species this game really has, with stats to build it from.
+            allowed = { id -> com.pokeemu.core.Transfer.isRealSpecies(e.data, id) && e.data.base(id) != null },
+        ) else {
+            var level by remember { mutableStateOf("5") }
+            val lv = level.toIntOrNull()?.takeIf { it in 1..100 }
+            AlertDialog(
+                onDismissRequest = { newTarget = null; newSpecies = null },
+                title = { Text("New ${e.data.speciesName(species)}") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            MonSprite(sprites, species, false, 56.dp)
+                            Text("Caught by you in ${rom.name}, in a Poké Ball, with the moves it knows at that level. Edit anything after.",
+                                Modifier.padding(start = 8.dp), style = MaterialTheme.typography.bodySmall)
+                        }
+                        androidx.compose.material3.OutlinedTextField(
+                            level, { v -> level = v.filter(Char::isDigit).take(3) },
+                            label = { Text("Level") }, singleLine = true, isError = lv == null,
+                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(enabled = lv != null, onClick = {
+                        newTarget = null; newSpecies = null
+                        var added = false
+                        act { it.insert(target, it.create(species, lv!!)); added = true }
+                        if (added) detail = if (target is Slot.Party) Slot.Party(e.partyMembers.size - 1) else target
+                    }) { Text("Add") }
+                },
+                dismissButton = { TextButton(onClick = { newSpecies = null }) { Text("Back") } },
+            )
+        }
+    }
     if (showReport && e != null) AlertDialog(
         onDismissRequest = { showReport = false },
         title = { Text("Game data from ROM") },

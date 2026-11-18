@@ -158,6 +158,14 @@ interface MonEditor {
     /** Parses an imported file; throws IllegalArgumentException if it isn't valid. */
     fun parseImport(bytes: ByteArray): Mon
 
+    /**
+     * A new Pokémon of [species] at [level], as if the player just caught it in
+     * this game: their trainer name and ID, met here at that level in a Poké
+     * Ball, random IVs and nature, the moves it would know at that level. Put it
+     * in an empty slot with [insert].
+     */
+    fun create(species: Int, level: Int): Mon = throw IllegalArgumentException("New Pokémon can't be made in this game")
+
     /** All changes written into the save file's bytes. */
     fun toBytes(): ByteArray
     /** Throws if [written] doesn't parse back to exactly the edited party. */

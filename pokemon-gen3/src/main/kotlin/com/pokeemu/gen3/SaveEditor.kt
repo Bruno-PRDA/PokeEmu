@@ -204,6 +204,20 @@ class SaveEditor(private val save: Gen3Save, val rom: RomData) : MonEditor {
 
     override val fileExtension get() = "pk3"
     override fun exportBytes(mon: Mon): ByteArray = (mon as Pk3).withEncoding(Pk3Encoding.STANDARD).toBoxBytes()
+    override fun create(species: Int, level: Int): Mon {
+        val t = save.trainer
+        val otId = (t.secretId.toLong() shl 16) or t.trainerId.toLong()
+        // A Pokémon the player caught here tells the game's language, version and a real place.
+        val own = party.firstOrNull { it.trainerId == t.trainerId && it.secretId == t.secretId }
+        val pk = Pk3.create(kotlin.random.Random.nextLong(0x1_0000_0000L), otId, party = false)
+        pk.setHeader(t.name, own?.language ?: 2)
+        pk.setOrigins(own?.metLocation ?: 0, level.coerceIn(1, 100), own?.originGame ?: 3, com.pokeemu.core.NewMon.POKE_BALL, t.isFemale)
+        pk.friendship = 70
+        val out = pk.withEncoding(pkEncoding)
+        com.pokeemu.core.NewMon.fill(this, out, species, level)
+        return out
+    }
+
     override fun parseImport(bytes: ByteArray): Mon {
         require(bytes.size == Pk3.BOX_SIZE || bytes.size == Pk3.PARTY_SIZE) { "Not a .pk3 file (must be 80 or 100 bytes)" }
         val pk = Pk3(bytes)

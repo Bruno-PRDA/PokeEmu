@@ -152,4 +152,21 @@ class Gen4SaveEditorTest {
             assertEquals(listOf(152, 158), back.party.map { it.species })
         }
     }
+
+    @Test fun newPokemonSurvivesASaveAndRefusesUnknownSpecies() {
+        val e = editorFor()
+        val pk = e.create(158, 20) as Pk4
+        assertTrue(pk.checksumValid)
+        assertEquals(158, pk.species)
+        assertEquals(20, pk.metLevel)
+        assertEquals("Totodile", pk.nickname)
+        assertEquals(e[Slot.Party(0)]!!.trainerId, pk.trainerId)
+        assertEquals(java.time.LocalDate.now(), pk.metDate)
+        e.insert(Slot.Party(1), pk)
+        val back = Gen4Save.parse(e.toBytes()).party
+        assertEquals(158, back[1].species)
+        assertEquals(20, back[1].level)
+        assertEquals(GameRules.stats(data.base(158)!!, 20, back[1].ivs, back[1].evs, back[1].nature), back[1].partyStats)
+        assertFailsWith<IllegalArgumentException> { e.create(1000, 5) }
+    }
 }

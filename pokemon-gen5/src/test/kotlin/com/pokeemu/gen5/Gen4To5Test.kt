@@ -132,4 +132,27 @@ class Gen4To5Test {
         assertEquals(null, Transfer.converters["pk5" to "pk4"])
         assertEquals("Black/White", Transfer.generationLabel("pk5"))
     }
+
+    @Test fun newPokemonInABlackWhiteSave() {
+        val editor = Gen5SaveEditor(Gen5Save.parse(blankSave()), data)
+        val pk = editor.create(252, 15) as Pk5
+        assertTrue(pk.checksumValid)
+        assertEquals(252, pk.species)
+        assertEquals("Treecko", pk.nickname)
+        assertEquals(15, pk.metLevel)
+        assertEquals(15, GameRules.levelForExp(3, pk.experience))
+        editor.insert(Slot.Box(0, 0), pk)
+        val back = Gen5Save.parse(editor.toBytes()).box(0)[0]!!
+        assertTrue(back.checksumValid)
+        assertEquals(252, back.species)
+    }
+
+    @Test fun newPokemonNeverGetsTheHiddenAbility() {
+        val editor = Gen5SaveEditor(Gen5Save.parse(blankSave()), data)
+        repeat(40) {
+            val pk = editor.create(252, 10) as Pk5
+            assertFalse(pk.hasHiddenAbility)
+            assertEquals(65, pk.ability, "Overgrow, not Unburden")
+        }
+    }
 }

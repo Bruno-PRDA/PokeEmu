@@ -95,7 +95,6 @@ fun PokemonDetail(
     var error by remember { mutableStateOf<String?>(null) }
     val rom = editor.data
     var renaming by remember { mutableStateOf(false) }
-    var pickSpecies by remember { mutableStateOf(false) }
 
     fun edit(block: () -> Unit) {
         try {
@@ -117,7 +116,7 @@ fun PokemonDetail(
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             tick.let { } // the header also depends on edits
-            Header(pk, editor, sprites, onRename = { if (!pk.isEgg) renaming = true }, onSpecies = { pickSpecies = true })
+            Header(pk, editor, sprites, onRename = { if (!pk.isEgg) renaming = true })
             TabRow(selectedTabIndex = tab) {
                 listOf("Summary", "Moves", "Stats").forEachIndexed { i, t -> Tab(tab == i, onClick = { tab = i }, text = { Text(t) }) }
             }
@@ -172,19 +171,12 @@ fun PokemonDetail(
             dismissButton = { TextButton(onClick = { renaming = false }) { Text("Cancel") } },
         )
     }
-    if (pickSpecies) IdPicker(
-        "Species", rom.speciesNames, allowZero = false,
-        onPick = { id -> pickSpecies = false; edit { editor.setSpecies(pk, id) } }, onDismiss = { pickSpecies = false },
-        leading = { id -> MonSprite(sprites, id, false, 40.dp) },
-        // Only species this game really has (hacks keep named slots with no data).
-        allowed = { id -> com.pokeemu.core.Transfer.isRealSpecies(rom, id) },
-    )
 }
 
-/** Sprite, name, species, level and types: who this is at a glance. Hold the name or species to change it. */
+/** Sprite, name, species, level and types: who this is at a glance. Hold the name to rename it. */
 @NonSkippableComposable
 @Composable
-private fun Header(pk: Mon, editor: MonEditor, sprites: SpriteSource?, onRename: () -> Unit, onSpecies: () -> Unit) {
+private fun Header(pk: Mon, editor: MonEditor, sprites: SpriteSource?, onRename: () -> Unit) {
     val rom = editor.data
     val base = rom.base(pk.species)
     val species = rom.speciesName(pk.species)
@@ -202,7 +194,6 @@ private fun Header(pk: Mon, editor: MonEditor, sprites: SpriteSource?, onRename:
                 Text(
                     listOfNotNull(species, editor.level(pk)?.let { "Lv $it" }).joinToString(" · ") + gender,
                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.combinedClickable(onClick = {}, onLongClick = onSpecies),
                 )
                 if (base != null) TypeChips(listOf(rom.typeName(base.type1), rom.typeName(base.type2)))
             }
@@ -228,7 +219,6 @@ private fun SummaryTab(pk: Mon, editor: MonEditor, rom: GameData, origin: String
     val base = rom.base(pk.species)
 
     Section("Pokémon") {
-        Text("Hold the name or species at the top to change them.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text("Nature", style = MaterialTheme.typography.labelLarge)
         Dropdown(GameData.NATURES[pk.nature], GameData.NATURES) { n ->
             edit { editor.setIdentity(pk, n, editor.gender(pk), pk.isShiny) }
@@ -283,13 +273,6 @@ private fun SummaryTab(pk: Mon, editor: MonEditor, rom: GameData, origin: String
     }
 
     when (picker) {
-        "species" -> IdPicker(
-            "Species", rom.speciesNames, allowZero = false,
-            onPick = { id -> picker = null; edit { editor.setSpecies(pk, id) } }, onDismiss = { picker = null },
-            leading = { id -> MonSprite(sprites, id, false, 40.dp) },
-            // Only species this game really has (hacks keep named slots with no data).
-            allowed = { id -> com.pokeemu.core.Transfer.isRealSpecies(rom, id) },
-        )
         "item" -> IdPicker(
             "Held item", rom.itemNames, allowZero = true,
             onPick = { id -> picker = null; edit { pk.heldItem = id } }, onDismiss = { picker = null },

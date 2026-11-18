@@ -74,6 +74,29 @@ class Gen4SaveEditor(private val save: Gen4Save, override val data: Gen4RomData)
         dirty = true
     }
 
+    override fun create(species: Int, level: Int): Mon {
+        val t = save.trainer
+        val own = party.firstOrNull { it.trainerId == t.trainerId && it.secretId == t.secretId }?.plainBytes()
+        val p = ByteArray(Pk4.BOX_SIZE)
+        p.put32(0, kotlin.random.Random.nextLong(0x1_0000_0000L))
+        p.put16(0x0C, t.trainerId); p.put16(0x0E, t.secretId)
+        p[0x14] = 70
+        p[0x17] = own?.get(0x17) ?: 2
+        p[0x5F] = own?.get(0x5F) ?: 12
+        Gen4Text.encode(t.name, 8).copyInto(p, 0x68)
+        // Met where the player's own Pokémon was (the Platinum/HGSS and the Diamond/Pearl field).
+        own?.copyInto(p, 0x46, 0x46, 0x48)
+        own?.copyInto(p, 0x7E, 0x7E, 0x80)
+        val today = java.time.LocalDate.now()
+        p[0x7B] = (today.year - 2000).toByte(); p[0x7C] = today.monthValue.toByte(); p[0x7D] = today.dayOfMonth.toByte()
+        p[0x83] = com.pokeemu.core.NewMon.POKE_BALL.toByte()
+        p[0x84] = (level.coerceIn(1, 100) or ((own?.get(0x84)?.toInt() ?: 0) and 0x80)).toByte()
+        p[0x86] = com.pokeemu.core.NewMon.POKE_BALL.toByte() // HeartGold/SoulSilver's ball
+        val pk = Pk4.fromPlain(p)
+        com.pokeemu.core.NewMon.fill(this, pk, species, level)
+        return pk
+    }
+
     override fun insert(slot: Slot, mon: Mon) {
         val pk = mon as Pk4
         require(get(slot) == null) { "That slot isn't empty" }

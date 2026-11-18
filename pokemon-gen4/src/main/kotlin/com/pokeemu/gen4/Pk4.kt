@@ -157,6 +157,9 @@ class Pk4(raw: ByteArray) : Mon {
     /** The box part is encrypted independently of the party area, so truncation is valid. */
     fun toBoxForm(): Pk4 = Pk4(toBytes().copyOf(BOX_SIZE))
 
+    /** The decrypted record. */
+    fun plainBytes(): ByteArray = plain.copyOf()
+
     fun toBytes(): ByteArray {
         val out = plain.copyOf()
         val checksum = computeChecksum()
