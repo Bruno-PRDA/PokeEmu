@@ -1,4 +1,9 @@
+@file:OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+
 package com.pokeemu.app.ui
+
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.material3.AlertDialog
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -81,12 +86,16 @@ fun PokemonDetail(
     origin: String? = null,
     /** Sprites and item icons from the game's ROM. */
     sprites: SpriteSource? = null,
+    /** Where and when it was met, e.g. "Route 1 · Lv 5 · Nov 18, 2026". */
+    met: String? = null,
 ) {
     val pk = remember(original) { original.copy() }
     var tick by remember { mutableIntStateOf(0) } // bump after mutating pk to recompose
     var tab by remember { mutableIntStateOf(0) }
     var error by remember { mutableStateOf<String?>(null) }
     val rom = editor.data
+    var renaming by remember { mutableStateOf(false) }
+    var pickSpecies by remember { mutableStateOf(false) }
 
     fun edit(block: () -> Unit) {
         try {
@@ -108,7 +117,7 @@ fun PokemonDetail(
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             tick.let { } // the header also depends on edits
-            Header(pk, editor, sprites)
+            Header(pk, editor, sprites, onRename = { if (!pk.isEgg) renaming = true }, onSpecies = { pickSpecies = true })
             TabRow(selectedTabIndex = tab) {
                 listOf("Summary", "Moves", "Stats").forEachIndexed { i, t -> Tab(tab == i, onClick = { tab = i }, text = { Text(t) }) }
             }
@@ -127,7 +136,7 @@ fun PokemonDetail(
                 }
                 tick.let { } // re-run this block (and the non-skippable tabs) after every edit
                 when (tab) {
-                    0 -> SummaryTab(pk, editor, rom, origin, sprites, ::edit)
+                    0 -> SummaryTab(pk, editor, rom, origin, met, sprites, ::edit)
                     1 -> MovesTab(pk, editor, rom, ::edit)
                     else -> StatsTab(pk, editor, ::edit)
                 }
@@ -138,12 +147,44 @@ fun PokemonDetail(
             }
         }
     }
+
+    if (renaming) {
+        var nick by remember { mutableStateOf(pk.nickname) }
+        val ok = editor.canEncode(nick)
+        AlertDialog(
+            onDismissRequest = { renaming = false },
+            title = { Text("Nickname") },
+            text = {
+                OutlinedTextField(
+                    nick, { v -> nick = v.take(editor.maxNicknameLength) },
+                    singleLine = true, modifier = Modifier.fillMaxWidth(), isError = !ok,
+                    supportingText = {
+                        Text(if (!ok) "Contains a character this game can't show" else "Up to ${editor.maxNicknameLength} characters · leave empty for the species name")
+                    },
+                )
+            },
+            confirmButton = {
+                TextButton(enabled = ok, onClick = {
+                    renaming = false
+                    edit { editor.setNickname(pk, nick.ifBlank { rom.speciesName(pk.species).take(editor.maxNicknameLength) }) }
+                }) { Text("OK") }
+            },
+            dismissButton = { TextButton(onClick = { renaming = false }) { Text("Cancel") } },
+        )
+    }
+    if (pickSpecies) IdPicker(
+        "Species", rom.speciesNames, allowZero = false,
+        onPick = { id -> pickSpecies = false; edit { editor.setSpecies(pk, id) } }, onDismiss = { pickSpecies = false },
+        leading = { id -> MonSprite(sprites, id, false, 40.dp) },
+        // Only species this game really has (hacks keep named slots with no data).
+        allowed = { id -> com.pokeemu.core.Transfer.isRealSpecies(rom, id) },
+    )
 }
 
-/** Sprite, name, species, level and types: who this is at a glance. */
+/** Sprite, name, species, level and types: who this is at a glance. Hold the name or species to change it. */
 @NonSkippableComposable
 @Composable
-private fun Header(pk: Mon, editor: MonEditor, sprites: SpriteSource?) {
+private fun Header(pk: Mon, editor: MonEditor, sprites: SpriteSource?, onRename: () -> Unit, onSpecies: () -> Unit) {
     val rom = editor.data
     val base = rom.base(pk.species)
     val species = rom.speciesName(pk.species)
@@ -153,14 +194,15 @@ private fun Header(pk: Mon, editor: MonEditor, sprites: SpriteSource?) {
             SpriteTile(96.dp) { MonSprite(sprites, pk.species, pk.isShiny, 88.dp) }
             Spacer(Modifier.width(16.dp))
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.combinedClickable(onClick = {}, onLongClick = onRename), verticalAlignment = Alignment.CenterVertically) {
                     Text(name, style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     if (pk.isShiny) Text("  ★", color = MaterialTheme.colorScheme.tertiary, style = MaterialTheme.typography.titleMedium)
                 }
                 val gender = when (editor.gender(pk)) { Gender.MALE -> " ♂"; Gender.FEMALE -> " ♀"; else -> "" }
                 Text(
-                    listOfNotNull(species.takeIf { it != name }, editor.level(pk)?.let { "Lv $it" }).joinToString(" · ") + gender,
+                    listOfNotNull(species, editor.level(pk)?.let { "Lv $it" }).joinToString(" · ") + gender,
                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.combinedClickable(onClick = {}, onLongClick = onSpecies),
                 )
                 if (base != null) TypeChips(listOf(rom.typeName(base.type1), rom.typeName(base.type2)))
             }
@@ -181,24 +223,12 @@ private fun Section(title: String, content: @Composable () -> Unit) {
 
 @NonSkippableComposable // reads `pk`, which is edited in place
 @Composable
-private fun SummaryTab(pk: Mon, editor: MonEditor, rom: GameData, origin: String?, sprites: SpriteSource?, edit: (() -> Unit) -> Unit) {
+private fun SummaryTab(pk: Mon, editor: MonEditor, rom: GameData, origin: String?, met: String?, sprites: SpriteSource?, edit: (() -> Unit) -> Unit) {
     var picker by remember { mutableStateOf<String?>(null) }
     val base = rom.base(pk.species)
 
     Section("Pokémon") {
-        ValueRow("Species", rom.speciesName(pk.species), leading = { MonSprite(sprites, pk.species, false, 32.dp) }) { picker = "species" }
-
-        var nick by remember(pk.personality, pk.species) { mutableStateOf(pk.nickname) }
-        OutlinedTextField(
-            nick, { v ->
-                nick = v.take(editor.maxNicknameLength)
-                if (editor.canEncode(nick)) edit { editor.setNickname(pk, nick) }
-            },
-            label = { Text("Nickname") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
-            isError = !editor.canEncode(nick),
-            supportingText = { if (!editor.canEncode(nick)) Text("Contains a character this game can't show") },
-        )
-
+        Text("Hold the name or species at the top to change them.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text("Nature", style = MaterialTheme.typography.labelLarge)
         Dropdown(GameData.NATURES[pk.nature], GameData.NATURES) { n ->
             edit { editor.setIdentity(pk, n, editor.gender(pk), pk.isShiny) }
@@ -246,6 +276,7 @@ private fun SummaryTab(pk: Mon, editor: MonEditor, rom: GameData, origin: String
     Section("Trainer") {
         InfoRow("Original trainer", "${pk.otName} · ID %05d".format(pk.trainerId))
         InfoRow("Origin", origin ?: "Unknown")
+        met?.let { InfoRow("Met", it) }
         InfoRow("Personality", "%08X".format(pk.personality))
         Text("Friendship: ${pk.friendship}", style = MaterialTheme.typography.labelLarge)
         Slider(pk.friendship.toFloat(), { v -> edit { pk.friendship = v.toInt() } }, valueRange = 0f..255f)

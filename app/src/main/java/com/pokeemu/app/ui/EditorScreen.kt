@@ -80,6 +80,7 @@ fun EditorScreen(rom: RomEntry, onBack: () -> Unit) {
     var showReport by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
     val origins = remember { Origins(context) }
+    val places by androidx.compose.runtime.produceState(emptyMap<Int, String>(), rom.uri) { value = com.pokeemu.app.MetInfo.places(context, rom) }
 
     fun toast(msg: String) = Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
     fun act(block: (MonEditor) -> Unit) {
@@ -157,6 +158,7 @@ fun EditorScreen(rom: RomEntry, onBack: () -> Unit) {
                 onDelete = { act { it.delete(detailSlot) }; detail = null },
                 onExport = { exportSlot = detailSlot; exportLauncher.launch("${e.data.speciesName(pk.species)}.${e.fileExtension}") },
                 origin = origins.describe(pk, rom.name, e.fileExtension),
+                met = com.pokeemu.app.MetInfo.describe(pk, places),
                 sprites = sprites,
             )
             return

@@ -114,6 +114,8 @@ class Pk4(raw: ByteArray) : Mon {
     override val originVersion: Int get() = plain.u8(0x5F)
     /** Platinum/HGSS keep the met location at 0x46; Diamond/Pearl (and the fallback for old places) at 0x7E. */
     override val metLocation: Int get() = plain.u16(0x46).takeIf { it != 0 } ?: plain.u16(0x7E)
+    override val metDate: java.time.LocalDate? get() =
+        runCatching { java.time.LocalDate.of(2000 + plain.u8(0x7B), plain.u8(0x7C), plain.u8(0x7D)) }.getOrNull()
     /** Met level (low 7 bits of 0x84; bit 7 is the OT's gender). */
     override var metLevel: Int
         get() = plain.u8(0x84) and 0x7F

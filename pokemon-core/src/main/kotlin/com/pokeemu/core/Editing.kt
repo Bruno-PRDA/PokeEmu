@@ -80,6 +80,8 @@ interface Mon {
     val metLocation: Int get() = 0
     /** Level it was met at; 0 for a hatched egg, -1 if unknown. */
     val metLevel: Int get() = -1
+    /** The day it was met (DS games store it); null if unknown. */
+    val metDate: java.time.LocalDate? get() = null
     val checksumValid: Boolean
     val moves: List<Int>
     fun move(i: Int): Int

@@ -139,6 +139,7 @@ fun GlobalPcScreen(games: List<RomEntry>, cover: suspend (RomEntry) -> Bitmap?, 
     /** A withdrawal that changes the Pokémon's generation, waiting for a yes. */
     var confirm by remember { mutableStateOf<Pair<StoredMon, Slot>?>(null) }
     var exportBytes by remember { mutableStateOf<ByteArray?>(null) }
+    val places by produceState(emptyMap<Int, String>(), game) { value = game?.let { com.pokeemu.app.MetInfo.places(context, it) }.orEmpty() }
 
     fun toast(msg: String) = Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
 
@@ -270,6 +271,7 @@ fun GlobalPcScreen(games: List<RomEntry>, cover: suspend (RomEntry) -> Bitmap?, 
                     },
                     origin = origins.describe(mon, game?.name, o.editor.fileExtension),
                     sprites = o.sprites,
+                    met = com.pokeemu.app.MetInfo.describe(mon, places),
                 )
                 return
             }
@@ -277,8 +279,10 @@ fun GlobalPcScreen(games: List<RomEntry>, cover: suspend (RomEntry) -> Bitmap?, 
         }
         is Held.Stored -> {
             BackHandler { details = null }
+            val from = games.firstOrNull { it.id == d.mon.fromRomId }
+            val fromPlaces by produceState(emptyMap<Int, String>(), from) { value = from?.let { com.pokeemu.app.MetInfo.places(context, it) }.orEmpty() }
             StoredDetail(
-                s = d.mon, sprite = pc.spriteFile(d.mon),
+                s = d.mon, sprite = pc.spriteFile(d.mon), places = fromPlaces,
                 onClose = { details = null },
                 onExport = { exportBytes = d.mon.bytes; exportLauncher.launch("${d.mon.speciesName}.${d.mon.format}") },
                 onRelease = {
@@ -615,7 +619,7 @@ private fun parse(s: StoredMon): Mon? = runCatching {
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun StoredDetail(s: StoredMon, sprite: File, onClose: () -> Unit, onExport: () -> Unit, onRelease: () -> Unit) {
+private fun StoredDetail(s: StoredMon, sprite: File, places: Map<Int, String>, onClose: () -> Unit, onExport: () -> Unit, onRelease: () -> Unit) {
     val mon = remember(s) { parse(s) }
     var release by remember { mutableStateOf(false) }
     Scaffold(
@@ -662,11 +666,11 @@ private fun StoredDetail(s: StoredMon, sprite: File, onClose: () -> Unit, onExpo
                     }
                 }
             }
-            DetailCard("Trainer and origin") {
+            DetailCard("Where it's from") {
                 mon?.let { Text("OT ${it.otName.ifBlank { "—" }} · ID %05d".format(it.trainerId), color = TextMain, fontSize = 14.sp) }
-                Text("Stored from ${s.fromGame} (${Transfer.generationLabel(s.format)})", color = TextMain, fontSize = 14.sp)
-                s.originGame?.takeIf { Transfer.normalize(it) != Transfer.normalize(s.fromGame) }?.let { Text("Caught in $it", color = TextMain, fontSize = 14.sp) }
-                Text("In the global PC since " + DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(s.storedAt)), color = TextDim, fontSize = 12.sp)
+                Text("Caught in ${s.originGame ?: s.fromGame}", color = TextMain, fontSize = 14.sp)
+                mon?.let { com.pokeemu.app.MetInfo.describe(it, places) }?.let { Text("Met: $it", color = TextMain, fontSize = 14.sp) }
+                Text(Transfer.generationLabel(s.format) + " Pokémon", color = TextDim, fontSize = 12.sp)
             }
             Text("To edit it, move it into a game and hold it there.", color = TextDim, fontSize = 12.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {

@@ -112,6 +112,8 @@ class Pk5(raw: ByteArray) : Mon {
     override val otName: String get() = decodeString(plain, 0x68, 8)
     override val originVersion: Int get() = plain.u8(0x5F)
     override val metLocation: Int get() = plain.u16(0x80)
+    override val metDate: java.time.LocalDate? get() =
+        runCatching { java.time.LocalDate.of(2000 + plain.u8(0x7B), plain.u8(0x7C), plain.u8(0x7D)) }.getOrNull()
     override var metLevel: Int
         get() = plain.u8(0x84) and 0x7F
         set(v) { plain[0x84] = ((plain.u8(0x84) and 0x80) or v.coerceIn(0, 100)).toByte() }
