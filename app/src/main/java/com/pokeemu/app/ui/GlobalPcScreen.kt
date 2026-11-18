@@ -81,7 +81,7 @@ import kotlinx.coroutines.withContext
 fun GlobalPcScreen(games: List<RomEntry>, onBack: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val pc = remember { Gen3To4.register(); GlobalPc(File(context.filesDir, "global-pc")) }
+    val pc = remember { com.pokeemu.gen5.Gen4To5.register(); GlobalPc(File(context.filesDir, "global-pc")) }
     val origins = remember { Origins(context) }
     var stored by remember { mutableStateOf(pc.list()) }
     var game by remember { mutableStateOf<RomEntry?>(null) }
@@ -249,6 +249,7 @@ fun GlobalPcScreen(games: List<RomEntry>, onBack: () -> Unit) {
     withdraw?.let { s ->
         val sameGame = o?.romId == s.fromRomId
         val toDs = s.format == "pk3" && o?.editor?.fileExtension == "pk4"
+        val toGen5 = s.format != "pk5" && o?.editor?.fileExtension == "pk5"
         AlertDialog(
             onDismissRequest = { withdraw = null },
             title = { Text("Move ${displayName(s.speciesName, s.nickname)} into ${game?.name}?") },
@@ -257,7 +258,8 @@ fun GlobalPcScreen(games: List<RomEntry>, onBack: () -> Unit) {
                     "It goes into the first free spot in this game's PC." +
                         (if (sameGame) "" else " Its species, moves and held item are matched by name in this game; " +
                             "anything the game doesn't have is left out.") +
-                        (if (toDs) " Like Pal Park, it's met at Pal Park and can't go back to a GBA game afterwards." else ""),
+                        (if (toDs) " Like Pal Park, it's met at Pal Park and can't go back to a GBA game afterwards." else "") +
+                        (if (toGen5) " Like Poké Transfer, it's met through Poké Transfer and can't go back to an older game afterwards." else ""),
                 )
             },
             confirmButton = { TextButton(onClick = { withdraw = null; doWithdraw(s) }) { Text("Move") } },
@@ -311,7 +313,7 @@ private fun StoredCard(s: StoredMon, sprite: File, onClick: () -> Unit) {
                 Text("caught in $it", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.tertiary, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Text(
-                "from ${s.fromGame} · ${if (s.format == "pk3") "GBA" else "DS"}",
+                "from ${s.fromGame} · ${com.pokeemu.core.Transfer.generationLabel(s.format)}",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1, overflow = TextOverflow.Ellipsis,

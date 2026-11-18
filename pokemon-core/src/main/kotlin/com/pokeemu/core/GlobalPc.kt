@@ -44,9 +44,13 @@ class GlobalPc(private val dir: File) {
     /** Stores [mon] from [editor]'s game. Returns the stored entry. */
     fun deposit(editor: MonEditor, mon: Mon, gameName: String, romId: String): StoredMon {
         requireCanDeposit(mon)
-        // A GBA-born Pokémon in a DS game wasn't caught there: don't record that game as its origin.
-        val arrivedFromGba = editor.fileExtension == "pk4" && mon.originVersion in 1..5
-        val origin = if (arrivedFromGba) origins.get(mon) else origins.record(mon, gameName)
+        // A Pokémon from an older generation wasn't caught in this game: don't record it as its origin.
+        val arrivedFromOlder = when (editor.fileExtension) {
+            "pk4" -> mon.originVersion in GBA_VERSIONS
+            "pk5" -> mon.originVersion in GBA_VERSIONS || mon.originVersion in GEN4_VERSIONS
+            else -> false
+        }
+        val origin = if (arrivedFromOlder) origins.get(mon) else origins.record(mon, gameName)
         val data = editor.data
         val stored = StoredMon(
             id = UUID.randomUUID().toString(),
@@ -80,6 +84,11 @@ class GlobalPc(private val dir: File) {
 
     /** Where the app keeps a stored Pokémon's sprite (so it shows even if its game is removed). */
     fun spriteFile(stored: StoredMon) = File(dir, "${stored.id}.png")
+
+    private companion object {
+        val GBA_VERSIONS = 1..5
+        val GEN4_VERSIONS = setOf(7, 8, 10, 11, 12)
+    }
 
     private fun write(s: StoredMon) {
         dir.mkdirs()
@@ -146,9 +155,7 @@ object Transfer {
     fun adapt(stored: StoredMon, editor: MonEditor, targetRomId: String): Result {
         val converter = if (stored.format == editor.fileExtension) null else converters[stored.format to editor.fileExtension]
         require(stored.format == editor.fileExtension || converter != null) {
-            val from = if (stored.format == "pk3") "GBA" else "DS"
-            val to = if (editor.fileExtension == "pk3") "GBA" else "DS"
-            "${stored.speciesName} is from a $from game and can't go into a $to game"
+            "${stored.speciesName} is from a ${generationLabel(stored.format)} game and can't go back to a ${generationLabel(editor.fileExtension)} game"
         }
         val mon = editor.parseImport(converter?.convert?.invoke(stored.bytes) ?: stored.bytes)
         if (converter == null && stored.fromRomId == targetRomId) return Result(mon, emptyList())
@@ -208,6 +215,14 @@ object Transfer {
         if (options.isNotEmpty() && editor.abilityIndex(mon) < 0) editor.setAbility(mon, 0)
 
         return Result(mon, notes)
+    }
+
+    /** "GBA", "Gen 4 DS", "Gen 5 DS" for a record format. */
+    fun generationLabel(format: String) = when (format) {
+        "pk3" -> "GBA"
+        "pk4" -> "Gen 4 DS"
+        "pk5" -> "Black/White"
+        else -> format
     }
 
     /** Index of [name] in [names], ignoring case, accents and punctuation; first match wins. */

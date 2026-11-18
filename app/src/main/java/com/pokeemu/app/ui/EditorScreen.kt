@@ -134,7 +134,8 @@ fun EditorScreen(rom: RomEntry, onBack: () -> Unit) {
         }
     }
 
-    val dirty = editor?.dirty == true
+    // Read [tick] so the bar updates after imports and moves too, not only after detail edits.
+    val dirty = tick >= 0 && editor?.dirty == true
     BackHandler(enabled = detail == null) { if (dirty) confirmDiscard = true else onBack() }
 
     // ---- detail page ----

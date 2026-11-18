@@ -26,11 +26,13 @@ class Origins(context: Context) {
         val recorded = ledger.get(mon)
         if (recorded != null) return Transfer.normalize(recorded) != Transfer.normalize(gameName)
         // No record: a GBA game of origin inside a DS game still gives it away.
-        return fileExtension == "pk4" && mon.originVersion in GBA_VERSIONS
+        return (fileExtension == "pk4" && mon.originVersion in GBA_VERSIONS) ||
+            (fileExtension == "pk5" && (mon.originVersion in GBA_VERSIONS || mon.originVersion in GEN4_VERSIONS))
     }
 
     private companion object {
         val GBA_VERSIONS = setOf(1, 2, 3, 4, 5)
+        val GEN4_VERSIONS = setOf(7, 8, 10, 11, 12)
     }
 }
 

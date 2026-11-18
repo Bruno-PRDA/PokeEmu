@@ -218,4 +218,4 @@ class MainActivity : ComponentActivity() {
 }
 
 /** Generations the Global PC can read and write saves of. */
-val GlobalPcGames = setOf(3, 4)
+val GlobalPcGames = setOf(3, 4, 5)

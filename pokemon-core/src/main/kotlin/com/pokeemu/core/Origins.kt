@@ -8,6 +8,7 @@ object GameVersions {
         1 to "Sapphire", 2 to "Ruby", 3 to "Emerald", 4 to "FireRed", 5 to "LeafGreen",
         7 to "HeartGold", 8 to "SoulSilver", 10 to "Diamond", 11 to "Pearl", 12 to "Platinum",
         15 to "Colosseum / XD",
+        20 to "White", 21 to "Black", 22 to "White 2", 23 to "Black 2",
     )
 
     fun name(id: Int): String? = names[id]
