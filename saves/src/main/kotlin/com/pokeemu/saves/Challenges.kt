@@ -29,6 +29,16 @@ class ChallengeStore(storage: GameStorage, romId: String, val slot: String = sto
         get() = settings().getProperty("nuzlocke") == "true"
         set(v) = save(settings().apply { setProperty("nuzlocke", v.toString()) })
 
+    /** Dupes clause: a wild Pokémon of a family already caught doesn't use up its area. On by default. */
+    var dupesClause: Boolean
+        get() = settings().getProperty("dupesClause") != "false"
+        set(v) = save(settings().apply { setProperty("dupesClause", v.toString()) })
+
+    /** Shiny clause: a shiny wild Pokémon may always be caught. On by default. */
+    var shinyClause: Boolean
+        get() = settings().getProperty("shinyClause") != "false"
+        set(v) = save(settings().apply { setProperty("shinyClause", v.toString()) })
+
     val active get() = shinyOdds != 0 || nuzlocke
 
     fun log(): List<Entry> = runCatching {
@@ -51,13 +61,17 @@ class ChallengeStore(storage: GameStorage, romId: String, val slot: String = sto
      * Nuzlocke areas: the first Pokémon met in each place (by the game's location
      * number), and whether it was caught. [place] is the name shown for it.
      */
-    data class Area(val location: Int, val place: String, val pid: Long, val caught: Boolean, val text: String)
+    data class Area(val location: Int, val place: String, val pid: Long, val caught: Boolean, val text: String, val species: Int = 0)
 
     fun areas(): List<Area> = runCatching {
         areasFile.takeIf { it.isFile }?.readLines().orEmpty().mapNotNull { line ->
-            val p = line.split('|', limit = 5)
-            if (p.size != 5) return@mapNotNull null
-            Area(p[0].toIntOrNull() ?: return@mapNotNull null, p[1], p[2].toLongOrNull() ?: 0, p[3] == "1", p[4])
+            // location|place|pid|caught|species|text (older lines have no species).
+            val p = line.split('|', limit = 6)
+            when (p.size) {
+                6 -> Area(p[0].toIntOrNull() ?: return@mapNotNull null, p[1], p[2].toLongOrNull() ?: 0, p[3] == "1", p[5], p[4].toIntOrNull() ?: 0)
+                5 -> Area(p[0].toIntOrNull() ?: return@mapNotNull null, p[1], p[2].toLongOrNull() ?: 0, p[3] == "1", p[4])
+                else -> null
+            }
         }
     }.getOrDefault(emptyList())
 
@@ -68,7 +82,7 @@ class ChallengeStore(storage: GameStorage, romId: String, val slot: String = sto
         dir.mkdirs()
         fun clean(s: String) = s.replace(Regex("[|\r\n]+"), " ")
         val rest = areas().filter { it.location != area.location } + area
-        areasFile.writeText(rest.joinToString("") { "${it.location}|${clean(it.place)}|${it.pid}|${if (it.caught) 1 else 0}|${clean(it.text)}\n" })
+        areasFile.writeText(rest.joinToString("") { "${it.location}|${clean(it.place)}|${it.pid}|${if (it.caught) 1 else 0}|${it.species}|${clean(it.text)}\n" })
     }
 
     fun clearLog() { logFile.delete(); areasFile.delete() }

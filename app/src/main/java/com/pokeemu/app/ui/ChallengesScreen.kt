@@ -49,6 +49,8 @@ fun ChallengesScreen(title: String, store: ChallengeStore, onBack: () -> Unit, o
     var nuzlocke by remember { mutableStateOf(store.nuzlocke) }
     var log by remember { mutableStateOf(store.log().asReversed()) }
     var areas by remember { mutableStateOf(store.areas()) }
+    var dupes by remember { mutableStateOf(store.dupesClause) }
+    var shinyClause by remember { mutableStateOf(store.shinyClause) }
 
     BackHandler(onBack = onBack)
     Scaffold(
@@ -98,6 +100,36 @@ fun ChallengesScreen(title: String, store: ChallengeStore, onBack: () -> Unit, o
                                 "the first one in an area is its encounter, and you're told when you meet or catch another there.",
                             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        if (nuzlocke) {
+                            ClauseRow("Dupes clause", "A Pokémon of a family you already caught doesn't count; the next new one in that area does.", dupes) {
+                                dupes = it; store.dupesClause = it; onChanged()
+                            }
+                            ClauseRow("Shiny clause", "Shiny Pokémon can always be caught, and don't use up the area.", shinyClause) {
+                                shinyClause = it; store.shinyClause = it; onChanged()
+                            }
+                        }
+                    }
+                }
+            }
+            val deaths = log.filter { it.kind == ChallengeStore.Kind.DEATH }
+            if (areas.isNotEmpty() || deaths.isNotEmpty()) item {
+                // The run at a glance.
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    StatTile("Areas", areas.size.toString(), Modifier.weight(1f))
+                    StatTile("Caught", areas.count { it.caught }.toString(), Modifier.weight(1f))
+                    StatTile("Fainted", deaths.size.toString(), Modifier.weight(1f))
+                }
+            }
+            if (deaths.isNotEmpty()) {
+                item { Text("Graveyard", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary) }
+                items(deaths) { e ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("🪦", Modifier.padding(end = 10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(e.text.removeSuffix(" fainted"), style = MaterialTheme.typography.bodyMedium)
+                            Text("Fell on " + DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(e.time)),
+                                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                     }
                 }
             }
@@ -135,6 +167,27 @@ fun ChallengesScreen(title: String, store: ChallengeStore, onBack: () -> Unit, o
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ClauseRow(title: String, text: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f).padding(end = 8.dp)) {
+            Text(title, style = MaterialTheme.typography.labelLarge)
+            Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Switch(checked = checked, onCheckedChange = onChange)
+    }
+}
+
+@Composable
+private fun StatTile(label: String, value: String, modifier: Modifier = Modifier) {
+    OutlinedCard(modifier) {
+        Column(Modifier.fillMaxWidth().padding(vertical = 10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(value, style = MaterialTheme.typography.headlineSmall)
+            Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

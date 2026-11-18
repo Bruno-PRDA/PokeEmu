@@ -280,6 +280,7 @@ fun PauseMenu(
     onQuit: () -> Unit,
     onDismiss: () -> Unit,
     onCheats: () -> Unit = {},
+    onCheatSearch: () -> Unit = {},
     onEditControls: () -> Unit = {},
     onSetCover: () -> Unit = {},
     /** Null hides the button (games without Pokemon tools). */
@@ -345,6 +346,7 @@ fun PauseMenu(
                     androidx.compose.material3.Switch(checked = askContinue, onCheckedChange = onAskContinue)
                 }
                 FilledTonalButton(onClick = onCheats, Modifier.fillMaxWidth()) { Text("Cheats") }
+                FilledTonalButton(onClick = onCheatSearch, Modifier.fillMaxWidth()) { Text("Cheat search") }
                 if (onChallenges != null) FilledTonalButton(onClick = onChallenges, Modifier.fillMaxWidth()) { Text("Challenges") }
                 FilledTonalButton(onClick = onEditControls, Modifier.fillMaxWidth()) { Text("Edit controls") }
                 FilledTonalButton(onClick = onSetCover, Modifier.fillMaxWidth()) { Text("Use this screen as cover") }

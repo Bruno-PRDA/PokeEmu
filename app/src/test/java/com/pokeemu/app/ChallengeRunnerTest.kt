@@ -18,13 +18,13 @@ class ChallengeRunnerTest {
         override val metLocation: Int,
         override val metLevel: Int = 3,
         override val currentHp: Int? = 20,
+        override val isShiny: Boolean = false,
     ) : Mon {
         override val nickname = ""
         override var heldItem = 0
         override var experience = 0L
         override var friendship = 0
         override val isEgg = false
-        override val isShiny = false
         override val nature = 0
         override val trainerId = 1
         override val secretId = 2
@@ -86,4 +86,30 @@ class ChallengeRunnerTest {
         assertEquals(null, store.area(90))
         dir.deleteRecursively()
     }
+
+    @Test fun shinyAndDupesClausesDontUseUpAnArea() {
+        val dir = Files.createTempDirectory("nuz2").toFile()
+        val store = ChallengeStore(GameStorage(dir), "rom", "main").apply { nuzlocke = true }
+        val messages = mutableListOf<String>()
+        val runner = ChallengeRunner(store, { data }, { _, _ -> true }, { messages += it }, places = { mapOf(89 to "ROUTE 1") })
+        val pidgey = FakeMon(1, 16, metLocation = 88, metLevel = 5)
+        fun step(party: List<Mon>, foes: List<Mon> = emptyList()) = runner.onState(LiveState(party, foes, opponentsWild = foes.isNotEmpty()), ByteArray(0))
+        step(listOf(pidgey))
+        // A shiny: may be caught, the area stays free.
+        step(listOf(pidgey), listOf(FakeMon(2, 19, metLocation = 89, isShiny = true)))
+        assertTrue(messages.last().contains("shiny clause"), messages.last())
+        assertEquals(null, store.area(89))
+        step(listOf(pidgey))
+        // Another Pidgey: the player has that family, so it doesn't count either.
+        step(listOf(pidgey), listOf(FakeMon(3, 16, metLocation = 89)))
+        assertTrue(messages.last().contains("dupes clause"), messages.last())
+        assertEquals(null, store.area(89))
+        step(listOf(pidgey))
+        // A Rattata: the area's real encounter.
+        step(listOf(pidgey), listOf(FakeMon(4, 19, metLocation = 89)))
+        assertEquals(4L, store.area(89)?.pid)
+        assertEquals(19, store.area(89)?.species)
+        dir.deleteRecursively()
+    }
+
 }

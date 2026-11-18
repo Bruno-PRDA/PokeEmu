@@ -63,7 +63,7 @@ import java.io.File
 
 class PlayerActivity : ComponentActivity() {
 
-    private enum class Dialog { NONE, MENU, SAVE_STATE, LOAD_STATE, RESUME_PROMPT, CHEATS, EDIT_CONTROLS, CHALLENGES }
+    private enum class Dialog { NONE, MENU, SAVE_STATE, LOAD_STATE, RESUME_PROMPT, CHEATS, EDIT_CONTROLS, CHALLENGES, CHEAT_SEARCH }
 
     private val storage by lazy { GameStorage(filesDir) }
     private var session: EmulatorSession? = null
@@ -170,6 +170,7 @@ class PlayerActivity : ComponentActivity() {
                         onQuit = { finish() },
                         onDismiss = { showDialog(Dialog.NONE) },
                         onCheats = { showDialog(Dialog.CHEATS) },
+                        onCheatSearch = { showDialog(Dialog.CHEAT_SEARCH) },
                         onEditControls = { showDialog(Dialog.EDIT_CONTROLS) },
                         onSetCover = ::useScreenAsCover,
                         onChallenges = if (pokemonTools) ({ showDialog(Dialog.CHALLENGES) }) else null,
@@ -227,6 +228,15 @@ class PlayerActivity : ComponentActivity() {
                                     },
                                 )
                             }
+                        }
+                    }
+                    Dialog.CHEAT_SEARCH -> androidx.compose.ui.window.Dialog(
+                        // Own window, like Cheats: the game's SurfaceView would draw over this one.
+                        onDismissRequest = { showDialog(Dialog.MENU) },
+                        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+                    ) {
+                        androidx.compose.material3.Surface(Modifier.fillMaxSize()) {
+                            com.pokeemu.app.ui.CheatSearchScreen(cheatSearchHost, onBack = { showDialog(Dialog.NONE) })
                         }
                     }
                     Dialog.CHALLENGES -> gameId?.let { id ->
@@ -302,6 +312,7 @@ class PlayerActivity : ComponentActivity() {
             volume = prefs.getFloat(PREF_VOLUME, 1f)
             muted = prefs.getBoolean(PREF_MUTED, false)
             applyVolume()
+            startPins(id)
             if (pokemonTools) {
                 val gen = ndsHeader?.pokemonGen ?: 3
                 lifecycleScope.launch(Dispatchers.IO) { places = RomDataStore(storage).locations(id, local.file, gen) }
@@ -392,6 +403,47 @@ class PlayerActivity : ComponentActivity() {
                 sprites = gen5Sprites
                 liveRam = com.pokeemu.gen5.Gen5LiveReader.RAM_ADDRESS to com.pokeemu.gen5.Gen5LiveReader.RAM_SIZE
                 liveReader = reader::read
+            }
+        }
+    }
+
+    // ---- cheat search and frozen values -------------------------------------------
+
+    private var cheatSearch: CheatSearch? = null
+    /** Frozen values of this game, written while it runs. */
+    @Volatile private var pins: List<com.pokeemu.saves.PinStore.Pin> = emptyList()
+
+    /** The game's work RAM: GBA EWRAM and IWRAM, or the DS main RAM. */
+    private fun searchRegions(): List<CheatSearch.Region> =
+        if (isDs) listOf(CheatSearch.Region(0x02000000L, 0x400000))
+        else listOf(CheatSearch.Region(EmulatorSession.GBA_EWRAM, EmulatorSession.GBA_EWRAM_SIZE), CheatSearch.Region(GBA_IWRAM, GBA_IWRAM_SIZE))
+
+    private val cheatSearchHost = object : com.pokeemu.app.ui.CheatSearchHost {
+        private fun read(r: CheatSearch.Region) = session?.readBus(r.base, r.length)
+        private fun store() = gameId?.let { com.pokeemu.saves.PinStore(storage, it) }
+        override val search get() = cheatSearch
+        override fun newSearch(size: Int): Boolean {
+            val s = CheatSearch(searchRegions(), size)
+            return s.start(::read).also { if (it) cheatSearch = s }
+        }
+        override fun filter(compare: CheatSearch.Compare, value: Long?) = cheatSearch?.filter(::read, compare, value) == true
+        override fun results() = cheatSearch?.results(::read).orEmpty()
+        override fun setOnce(address: Long, size: Int, value: Long) =
+            session?.writeBus(address, ByteArray(size) { (value shr (8 * it)).toByte() }) == true
+        override val pins get() = this@PlayerActivity.pins
+        override fun putPin(pin: com.pokeemu.saves.PinStore.Pin) { store()?.let { it.put(pin); this@PlayerActivity.pins = it.list() } }
+        override fun removePin(address: Long) { store()?.let { it.remove(address); this@PlayerActivity.pins = it.list() } }
+    }
+
+    /** Keeps frozen values written while the game runs. */
+    private fun startPins(id: String) {
+        pins = com.pokeemu.saves.PinStore(storage, id).list()
+        lifecycleScope.launch {
+            while (isActive) {
+                delay(PIN_REFRESH_MS)
+                if (dialog != Dialog.NONE) continue
+                val s = session ?: continue
+                for (p in pins) if (p.enabled) s.writeBus(p.address, ByteArray(p.size) { (p.value shr (8 * it)).toByte() })
             }
         }
     }
@@ -604,6 +656,7 @@ class PlayerActivity : ComponentActivity() {
         private const val PREF_VOLUME = "volume"
         private const val PREF_MUTED = "muted"
         private const val PREF_ASK_CONTINUE = "ask_continue"
+        private const val PIN_REFRESH_MS = 150L
         private const val EXTRA_URI = "uri"
         private const val OVERLAY_REFRESH_MS = 500L
         private const val EXTRA_NAME = "name"

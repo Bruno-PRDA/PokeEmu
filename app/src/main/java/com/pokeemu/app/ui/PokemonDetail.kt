@@ -192,7 +192,7 @@ private fun Header(pk: Mon, editor: MonEditor, sprites: SpriteSource?, onRename:
                 }
                 val gender = when (editor.gender(pk)) { Gender.MALE -> " ♂"; Gender.FEMALE -> " ♀"; else -> "" }
                 Text(
-                    listOfNotNull(species, editor.level(pk)?.let { "Lv $it" }).joinToString(" · ") + gender,
+                    listOfNotNull(species.takeIf { !it.equals(name, ignoreCase = true) }, editor.level(pk)?.let { "Lv $it" }).joinToString(" · ") + gender,
                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 if (base != null) TypeChips(listOf(rom.typeName(base.type1), rom.typeName(base.type2)))

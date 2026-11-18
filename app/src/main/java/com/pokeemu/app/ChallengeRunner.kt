@@ -101,11 +101,29 @@ class ChallengeRunner(
         else -> location < 2000
     }
 
+    /** The first stage of [species]' evolution family (itself if unknown). */
+    private fun family(species: Int): Int = data()?.learnsets?.lineage(species)?.lastOrNull() ?: species
+
+    /** Families the player already caught (dupes clause): catches on record and the current team. */
+    private fun ownedFamilies(team: List<Mon>): Set<Int> =
+        (store.areas().filter { it.caught && it.species != 0 }.map { it.species } + team.map { it.species }).map(::family).toSet()
+
     /** A wild Pokémon met at [location] as a battle starts. */
-    private fun met(foe: Mon, location: Int, wild: String) {
+    private fun met(foe: Mon, location: Int, wild: String, team: List<Mon>) {
         val prev = store.area(location)
+        if (foe.isShiny && store.shinyClause && prev?.pid != foe.personality) {
+            notify("Nuzlocke: shiny clause, you may catch it. It doesn't use up ${place(location)}.")
+            return
+        }
+        if (prev == null && store.dupesClause && family(foe.species) in ownedFamilies(team)) {
+            if (warnedArea != location) {
+                warnedArea = location
+                notify("Nuzlocke: dupes clause, you already have this family. It doesn't count; the next new one in ${place(location)} does.")
+            }
+            return
+        }
         if (prev == null) {
-            store.putArea(ChallengeStore.Area(location, place(location), foe.personality, caught = false, text = wild))
+            store.putArea(ChallengeStore.Area(location, place(location), foe.personality, caught = false, text = wild, species = foe.species))
             notify("Nuzlocke: first encounter in ${place(location)}. You may catch it.")
         } else if (prev.pid != foe.personality && warnedArea != location) {
             warnedArea = location
@@ -119,8 +137,9 @@ class ChallengeRunner(
         if (!isArea(mon, loc) || mon.metLevel == 0) return // hatched, traded, gift from an event...
         val prev = store.area(loc)
         when {
+            mon.isShiny && store.shinyClause && prev?.pid != mon.personality -> {} // shiny clause: doesn't use up the area
             prev == null || prev.pid == mon.personality ->
-                store.putArea(ChallengeStore.Area(loc, place(loc), mon.personality, caught = true, text = "Caught ${name(mon)}"))
+                store.putArea(ChallengeStore.Area(loc, place(loc), mon.personality, caught = true, text = "Caught ${name(mon)}", species = mon.species))
             else -> notify("Nuzlocke: ${name(mon)} was caught in ${place(loc)}, but that area's encounter was ${prev.text}. The rules say release it.")
         }
     }
@@ -146,7 +165,7 @@ class ChallengeRunner(
                 val wild = "Wild ${data()?.speciesName(foe.species) ?: "#${foe.species}"} Lv ${foe.level ?: "?"}"
                 val loc = foe.metLocation.takeIf { isArea(foe, it) }
                 store.add(ChallengeStore.Kind.ENCOUNTER, foe.personality, if (loc != null) "$wild in ${place(loc)}" else wild)
-                if (loc != null) met(foe, loc, wild)
+                if (loc != null) met(foe, loc, wild, party)
             }
             val stillThere = party.filter { it.personality in dead }
             if (stillThere.isNotEmpty()) notify("Nuzlocke: ${stillThere.joinToString { name(it) }} fainted earlier and shouldn't battle.")
