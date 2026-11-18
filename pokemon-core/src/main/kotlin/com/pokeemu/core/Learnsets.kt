@@ -138,7 +138,7 @@ class Learnsets(
                 val v = words(i) ?: return null
                 when {
                     v == 0xFFFF -> return out.takeIf { it.size >= 20 }
-                    v > EGG_MARKER && v - EGG_MARKER < speciesCount -> current = out.getOrPut(v - EGG_MARKER) { mutableListOf() }
+                    v > EGG_MARKER && v - EGG_MARKER < eggSpeciesLimit(speciesCount) -> current = out.getOrPut(v - EGG_MARKER) { mutableListOf() }
                     v in 1 until moveCount && current != null -> current += v
                     else -> return null
                 }
@@ -148,6 +148,9 @@ class Learnsets(
         }
 
         const val EGG_MARKER = 20000
+
+        /** Expanded engines list alternate forms (numbered past the named species) in the egg-move table too. */
+        fun eggSpeciesLimit(speciesCount: Int) = maxOf(speciesCount * 2, speciesCount + 1024)
     }
 }
 

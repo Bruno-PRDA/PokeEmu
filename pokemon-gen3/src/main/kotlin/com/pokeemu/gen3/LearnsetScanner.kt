@@ -146,7 +146,7 @@ internal class LearnsetScanner(
         var best: Map<Int, List<Int>>? = null
         for (t in targets(2)) {
             val first = u16At(t) ?: continue
-            if (first <= Learnsets.EGG_MARKER || first - Learnsets.EGG_MARKER >= speciesCount) continue
+            if (first <= Learnsets.EGG_MARKER || first - Learnsets.EGG_MARKER >= Learnsets.eggSpeciesLimit(speciesCount)) continue
             val parsed = Learnsets.parseEggMoves({ i -> u16At(t + 2 * i) }, speciesCount, moveCount) ?: continue
             if (best == null || parsed.size > best.size) best = parsed
         }

@@ -72,7 +72,7 @@ data class RomData(
 
     companion object {
         /** Bump when the scanner changes so cached results are rebuilt. */
-        const val FORMAT_VERSION = 7
+        const val FORMAT_VERSION = 8
 
         val TYPE_NAMES = listOf(
             "Normal", "Fighting", "Flying", "Poison", "Ground", "Rock", "Bug", "Ghost", "Steel", "???",
