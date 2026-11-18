@@ -260,7 +260,8 @@ class PlayerActivity : ComponentActivity() {
             }
             val ndsHeader = NdsHeader.parse(header)
             isDs = ndsHeader != null
-            pokemonTools = ndsHeader?.pokemonTools ?: true
+            // Overlay, challenges and built-in cheats read the game's memory: GBA and Gen 4 only.
+            pokemonTools = ndsHeader?.liveTools ?: true
             portraitCustom = padStore.get(PadCustomStore.key(isDs, landscape = false))
             landscapeCustom = padStore.get(PadCustomStore.key(isDs, landscape = true))
             if (isDs) {

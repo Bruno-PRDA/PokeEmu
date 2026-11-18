@@ -35,16 +35,16 @@ class Gen3Sprites(private val tables: SpriteTables, private val read: (offset: I
         if (!tables.hasPokemon || species <= 0) return null
         if (tables.speciesStride > 0) return recordPicture(species, shiny)
         val pic = read(tables.frontPics + 8 * species, 8) ?: return null
-        if (pic.u16(6) != species) return null // tag check: entry belongs to this species
+        // Tags normally equal the species; some hacks number their newest entries differently (Radical Red).
+        // Palette entries are tagged with their species, except forms that share one
+        // (every Unown letter uses Unown's): the entry's position is what counts.
         val pal = if (shiny && tables.shinyPalettes >= 0) {
-            val e = read(tables.shinyPalettes + 8 * species, 8) ?: return null
-            if (e.u16(4) != species + tables.shinyTagOffset) return null
-            e
+            read(tables.shinyPalettes + 8 * species, 8) ?: return null
         } else {
-            read(tables.palettes + 8 * species, 8)?.takeIf { it.u16(4) == species } ?: return null
+            read(tables.palettes + 8 * species, 8) ?: return null
         }
         val tiles = lz(pic.u32(0), 0x800) ?: return null
-        val colours = lz(pal.u32(0), 0x20) ?: return null
+        val colours = palette(pal.u32(0)) ?: return null
         // 64x64 (8x8 tiles); some entries hold two animation frames (64x128), keep the first.
         return Picture.fromTiles(tiles, Picture.palette(colours), 8, 8)
     }
@@ -56,8 +56,15 @@ class Gen3Sprites(private val tables: SpriteTables, private val read: (offset: I
         val pic = pointer(tables.frontPics) ?: return null
         val pal = pointer(if (shiny && tables.shinyPalettes >= 0) tables.shinyPalettes else tables.palettes) ?: return null
         val tiles = lz(pic, 0x800) ?: return null
-        val colours = lz(pal, 0x20) ?: return null
+        val colours = palette(pal) ?: return null
         return Picture.fromTiles(tiles, Picture.palette(colours), 8, 8)
+    }
+
+    /** A compressed palette, padded to 16 colours (newer hacks store only the colours they use). */
+    private fun palette(pointer: Long): ByteArray? {
+        val data = lz(pointer, 2) ?: return null
+        if (data.size >= 0x20) return data
+        return data.copyOf(0x20)
     }
 
     override fun item(item: Int): Picture? {

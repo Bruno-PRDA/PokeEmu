@@ -33,7 +33,9 @@ class OpenSave(
     companion object {
         /** Reads pictures straight from the ROM file (a GBA ROM isn't kept in memory). */
         fun spritesFor(rom: RomEntry, file: File, editor: MonEditor): SpriteSource? = runCatching {
-            if (rom.header.platform == Platform.NDS) {
+            if (rom.header.pokemonGen == 5) {
+                com.pokeemu.gen5.Gen5Sprites.open(FileRomSource(file))
+            } else if (rom.header.platform == Platform.NDS) {
                 Gen4Sprites.open(FileRomSource(file))
             } else {
                 val tables = (editor.data as? RomData)?.sprites ?: return@runCatching null
@@ -59,7 +61,11 @@ class OpenSave(
                 val store = RomDataStore(storage)
                 val manager = SaveManager(storage, id)
                 check(manager.hasSave) { "this game has no save yet. Play it and save in-game first" }
-                val editor: MonEditor = if (rom.header.platform == Platform.NDS) {
+                val editor: MonEditor = if (rom.header.pokemonGen == 5) {
+                    withContext(Dispatchers.Main) { onStatus("Reading game data from the ROM…") }
+                    val data = store.gen5(id, local.file) ?: throw IllegalStateException("couldn't read game data from this ROM")
+                    com.pokeemu.gen5.Gen5SaveEditor(com.pokeemu.gen5.Gen5Save.parse(manager.saveFile.readBytes()), data)
+                } else if (rom.header.platform == Platform.NDS) {
                     withContext(Dispatchers.Main) { onStatus("Reading game data from the ROM…") }
                     val data = store.gen4(id, local.file) ?: throw IllegalStateException("couldn't read game data from this ROM")
                     Gen4SaveEditor(Gen4Save.parse(manager.saveFile.readBytes()), data)

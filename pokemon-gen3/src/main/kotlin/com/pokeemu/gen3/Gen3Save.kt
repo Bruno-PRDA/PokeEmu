@@ -31,14 +31,18 @@ class Gen3Save private constructor(
     private val sections: Array<ByteArray>,
     val layout: SaveLayout,
     /**
-     * True for saves from engines (CFRU and similar) that checksum every
-     * section over 0xFF0 bytes and store extra data past the vanilla sizes.
+     * Bytes each section's checksum covers, by section id: the vanilla sizes, or
+     * 0xFF0 for sections a hack engine (CFRU and similar) enlarged. Some hacks
+     * enlarge only some sections, so this is per section.
      */
-    val extendedChecksums: Boolean,
+    private val checksumSizes: IntArray,
     /** How Pokémon records are stored in this save (detected from the party). */
     val pkEncoding: Pk3Encoding,
 ) {
     val game: Gen3Game get() = layout.game
+
+    /** True when a hack engine enlarged at least one section (its checksum covers more bytes). */
+    val extendedChecksums: Boolean get() = checksumSizes.withIndex().any { (id, size) -> size > dataSize(id) }
 
     // ---- trainer ---------------------------------------------------------------
 
@@ -156,7 +160,7 @@ class Gen3Save private constructor(
             val section = ByteArray(SECTION_SIZE)
             sections[id].copyInto(section, 0, 0, OFF_ID)  // keep any padding bytes as the game wrote them
             section.put16(OFF_ID, id)
-            section.put16(OFF_CHECKSUM, checksum(section, checksumSize(id, extendedChecksums)))
+            section.put16(OFF_CHECKSUM, checksum(section, checksumSizes[id]))
             section.put32(OFF_SIGNATURE, SIGNATURE)
             section.put32(OFF_INDEX, newIndex)
             section.copyInto(out, base)
@@ -186,6 +190,8 @@ class Gen3Save private constructor(
         fun checksumSize(id: Int, extended: Boolean): Int = if (extended) EXTENDED_SIZE else dataSize(id)
 
         private const val EXTENDED_SIZE = 0xFF0
+        /** Everything before the section id (some engines checksum all of it). */
+        private const val FULL_SIZE = 0xFF4
 
         /** Vanilla data size of each section (also what its checksum covers in vanilla games). */
         fun dataSize(id: Int): Int = when (id) {
@@ -213,17 +219,19 @@ class Gen3Save private constructor(
             if (bytes.size < FILE_SIZE) throw Gen3SaveException("Not a Gen 3 save (expected 128 KB, got ${bytes.size} bytes)")
             val blocks = (0..1).mapNotNull { readBlock(bytes, it) }
             if (blocks.isEmpty()) throw Gen3SaveException("No valid save data found")
-            val newest = blocks.maxBy { it.index }
-            newest.badChecksum?.let { throw Gen3SaveException("Section $it of the newest save has a bad checksum") }
+            // Like the game: the newest copy whose sections all check out. A copy can be half
+            // written (the game was saving when the file was taken); the game then loads the other.
+            val newest = blocks.filter { it.badChecksum == null }.maxByOrNull { it.index }
+                ?: blocks.maxBy { it.index }.let { throw Gen3SaveException("Section ${it.badChecksum} of the newest save has a bad checksum") }
 
             val layout = SaveLayout.of(forcedGame ?: detectGame(newest.sections))
             val encoding = detectEncoding(newest.sections, layout)
-            return Gen3Save(bytes.copyOf(), newest.block, newest.order, newest.index, newest.sections, layout, newest.extended, encoding)
+            return Gen3Save(bytes.copyOf(), newest.block, newest.order, newest.index, newest.sections, layout, newest.sizes, encoding)
         }
 
         private class Block(
             val block: Int, val index: Long, val order: IntArray, val sections: Array<ByteArray>,
-            val badChecksum: Int?, val extended: Boolean,
+            val badChecksum: Int?, val sizes: IntArray,
         )
 
         private fun readBlock(bytes: ByteArray, block: Int): Block? {
@@ -243,12 +251,12 @@ class Gen3Save private constructor(
             }
             @Suppress("UNCHECKED_CAST")
             val secs = sections as Array<ByteArray>
-            // Every section must verify under one scheme: vanilla sizes, or 0xFF0 everywhere.
-            fun firstBad(extended: Boolean) =
-                (0 until SECTION_COUNT).firstOrNull { checksum(secs[it], checksumSize(it, extended)) != secs[it].u16(OFF_CHECKSUM) }
-            val badVanilla = firstBad(extended = false)
-            val extended = badVanilla != null && firstBad(extended = true) == null
-            return Block(block, index, order, secs, if (extended) null else badVanilla, extended)
+            // Each section verifies over its vanilla size, or over 0xFF0 when the hack enlarged it.
+            val sizes = IntArray(SECTION_COUNT) { id ->
+                listOf(dataSize(id), EXTENDED_SIZE, FULL_SIZE).firstOrNull { checksum(secs[id], it) == secs[id].u16(OFF_CHECKSUM) } ?: -1
+            }
+            val bad = sizes.indexOfFirst { it < 0 }.takeIf { it >= 0 }
+            return Block(block, index, order, secs, bad, IntArray(SECTION_COUNT) { if (sizes[it] < 0) dataSize(it) else sizes[it] })
         }
 
         /**

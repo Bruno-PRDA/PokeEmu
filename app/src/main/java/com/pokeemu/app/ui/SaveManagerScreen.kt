@@ -83,6 +83,9 @@ private data class SaveState(
     val gen4Names: Gen4RomData? = null,
     /** Pokémon stored across all PC boxes of a Gen 4 save. */
     val pcCount: Int = 0,
+    /** Black/White and Black 2/White 2 saves. */
+    val gen5: Result<com.pokeemu.gen5.Gen5Save>? = null,
+    val gen5Names: com.pokeemu.gen5.Gen5RomData? = null,
 )
 
 /** A confirmation the user must accept before something replaces their save. */
@@ -106,7 +109,8 @@ fun SaveManagerScreen(rom: RomEntry, onBack: () -> Unit, onEditPokemon: () -> Un
     suspend fun refresh() {
         val m = manager ?: return
         state = withContext(Dispatchers.IO) {
-            val gen4 = if (m.hasSave && isDs && rom.header.pokemonTools) runCatching { Gen4Save.parse(m.saveFile.readBytes()) } else null
+            val gen5 = if (m.hasSave && rom.header.pokemonGen == 5) runCatching { com.pokeemu.gen5.Gen5Save.parse(m.saveFile.readBytes()) } else null
+            val gen4 = if (m.hasSave && isDs && rom.header.pokemonGen == 4) runCatching { Gen4Save.parse(m.saveFile.readBytes()) } else null
             SaveState(
                 slots = m.slots(),
                 activeSlot = m.activeSlot,
@@ -116,7 +120,10 @@ fun SaveManagerScreen(rom: RomEntry, onBack: () -> Unit, onEditPokemon: () -> Un
                 dsSaveSize = if (m.hasSave && isDs) m.saveFile.length() else null,
                 gen4 = gen4,
                 gen4Names = if (gen4?.isSuccess == true) localRom?.let { RomDataStore(GameStorage(context.filesDir)).gen4(it.id, it.file) } else null,
-                pcCount = gen4?.getOrNull()?.let { save -> (0 until save.layout.boxCount).sumOf { b -> save.box(b).count { it != null } } } ?: 0,
+                pcCount = gen4?.getOrNull()?.let { save -> (0 until save.layout.boxCount).sumOf { b -> save.box(b).count { it != null } } }
+                    ?: gen5?.getOrNull()?.let { save -> (0 until save.boxCount).sumOf { b -> save.box(b).count { it != null } } } ?: 0,
+                gen5 = gen5,
+                gen5Names = if (gen5?.isSuccess == true) localRom?.let { RomDataStore(GameStorage(context.filesDir)).gen5(it.id, it.file) } else null,
             )
         }
     }
@@ -306,11 +313,46 @@ private fun SummaryCard(s: SaveState, onEditPokemon: () -> Unit) {
                         Text("Editing needs game data from the ROM, which couldn't be read.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
                     }
                 }
+                s.gen5?.isSuccess == true -> {
+                    val save = s.gen5.getOrThrow()
+                    val t = save.trainer
+                    Text(t.name.ifEmpty { "(no name)" }, style = MaterialTheme.typography.titleLarge)
+                    Text("${save.game.label} · ID %05d".format(t.trainerId))
+                    if (save.party.isNotEmpty()) {
+                        Text("Party", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 8.dp))
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            for (pk in save.party) {
+                                AssistChip(onClick = {}, label = {
+                                    Text(buildString {
+                                        val species = s.gen5Names?.speciesName(pk.species)
+                                        when {
+                                            pk.isEgg -> append("Egg")
+                                            species == null -> append(pk.nickname.ifBlank { "#${pk.species}" })
+                                            pk.isNicknamed && pk.nickname.isNotBlank() && !pk.nickname.equals(species, true) -> append("${pk.nickname} ($species)")
+                                            else -> append(species)
+                                        }
+                                        pk.level?.let { append(" Lv$it") }
+                                        if (pk.isShiny) append(" ★")
+                                    })
+                                })
+                            }
+                        }
+                    }
+                    Text("PC: %d Pokémon in %d boxes".format(s.pcCount, save.boxCount), modifier = Modifier.padding(top = 8.dp))
+                    if (s.gen5Names != null) {
+                        FilledTonalButton(onClick = onEditPokemon, modifier = Modifier.padding(top = 8.dp)) { Text("Edit Pokémon") }
+                    } else {
+                        Text("Editing needs game data from the ROM, which couldn't be read.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
+                    }
+                }
                 s.dsSaveSize != null -> {
                     Text("Nintendo DS save", style = MaterialTheme.typography.titleMedium)
                     Text("%,d KB · backups, slots and import/export work".format(s.dsSaveSize / 1024))
                     (s.gen4?.exceptionOrNull() as? Gen4SaveException)?.let {
                         Text("Not readable as Gen 4: ${it.message}", style = MaterialTheme.typography.bodySmall)
+                    }
+                    (s.gen5?.exceptionOrNull())?.let {
+                        Text("Not readable: ${it.message}", style = MaterialTheme.typography.bodySmall)
                     }
                 }
                 summary == null -> Unit

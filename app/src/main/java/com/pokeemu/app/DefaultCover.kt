@@ -34,6 +34,7 @@ object DefaultCover {
     private val MASCOTS = mapOf(
         "BPR" to "Charizard", "BPG" to "Venusaur", "AXV" to "Groudon", "AXP" to "Kyogre", "BPE" to "Rayquaza",
         "ADA" to "Dialga", "APA" to "Palkia", "CPU" to "Giratina", "IPK" to "Ho-Oh", "IPG" to "Lugia",
+        "IRB" to "Reshiram", "IRA" to "Zekrom", "IRE" to "Kyurem", "IRD" to "Kyurem",
     )
 
     /** The cached picture, or a new one (slow the first time: reads the ROM). Null when it can't be drawn. */
@@ -51,7 +52,9 @@ object DefaultCover {
     private fun draw(context: Context, rom: RomEntry, storage: GameStorage): Bitmap? {
         val local = RomLibrary(context).localCopy(rom.uri)
         val store = RomDataStore(storage)
-        val (data: GameData?, sprites: SpriteSource?) = if (rom.header.platform == Platform.NDS) {
+        val (data: GameData?, sprites: SpriteSource?) = if (rom.header.pokemonGen == 5) {
+            store.gen5(local.id, local.file) to com.pokeemu.gen5.Gen5Sprites.open(FileRomSource(local.file))
+        } else if (rom.header.platform == Platform.NDS) {
             store.gen4(local.id, local.file) to Gen4Sprites.open(FileRomSource(local.file))
         } else {
             val data = store.cached(local.id) ?: store.scanAndCache(local.id, local.file.readBytes())

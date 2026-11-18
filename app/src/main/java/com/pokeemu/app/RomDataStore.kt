@@ -27,6 +27,20 @@ class RomDataStore(private val storage: GameStorage) {
     fun forget(romId: String) {
         cacheFile(romId).delete()
         gen4CacheFile(romId).delete()
+        gen5CacheFile(romId).delete()
+    }
+
+    private fun gen5CacheFile(romId: String) = File(storage.gameDir(romId), "romdata5.bin")
+
+    /** Game data read from a Black/White or Black 2/White 2 ROM, cached; null if it can't be read. */
+    fun gen5(romId: String, romFile: File): com.pokeemu.gen5.Gen5RomData? {
+        val cache = gen5CacheFile(romId)
+        cache.takeIf { it.isFile }?.let { f -> runCatching { f.inputStream().use(com.pokeemu.gen5.Gen5RomData::read) }.getOrNull() }?.let { return it }
+        val data = runCatching { FileRomSource(romFile).use(com.pokeemu.gen5.Gen5RomData::scan) }.getOrNull() ?: return null
+        val tmp = File(cache.path + ".tmp")
+        tmp.outputStream().use(data::write)
+        tmp.renameTo(cache)
+        return data
     }
 
     private fun gen4CacheFile(romId: String) = File(storage.gameDir(romId), "romdata4.bin")

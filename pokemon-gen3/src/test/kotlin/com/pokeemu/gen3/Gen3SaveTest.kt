@@ -148,6 +148,37 @@ class Gen3SaveTest {
         assertEquals(0x42, written[1 * 0x1000 + 0xFE1].toInt() and 0xFF, "extra data preserved (section 1 now at physical slot 1 of block 0)")
     }
 
+    /** Some hacks enlarge only some sections: each section keeps its own checksum size. */
+    @Test fun mixedChecksumSizesReadAndWriteBack() {
+        val b = SaveBuilder(SaveLayout.FIRERED_LEAFGREEN).trainer("NYX", 1, 2).party(mon(25, 5))
+        b.sections[1][0xFE1] = 0x42 // section 1 enlarged: data past the vanilla size, checksum over 0xFF0
+        b.sections[0][0xF50] = 0x13 // section 0 vanilla: leftover bytes past its size, not checksummed
+        val file = ByteArray(Gen3Save.FILE_SIZE) { 0xFF.toByte() }
+        for (p in 0 until 14) {
+            val sec = b.sections[p].copyOf()
+            sec.put16(0xFF4, p)
+            sec.put16(0xFF6, Gen3Save.checksum(sec, if (p == 1) 0xFF0 else Gen3Save.dataSize(p)))
+            sec.put32(0xFF8, 0x08012025L)
+            sec.put32(0xFFC, 1)
+            sec.copyInto(file, 0xE000 + p * 0x1000)
+        }
+        val save = Gen3Save.parse(file)
+        assertTrue(save.extendedChecksums)
+        save.money = 555
+        val reread = Gen3Save.parse(save.toBytes())
+        assertEquals(555, reread.money)
+        assertEquals(25, reread.party[0].species)
+    }
+
+    /** The file was taken while the game was saving: like the game, use the older complete copy. */
+    @Test fun halfWrittenNewestCopyFallsBackToTheOlderOne() {
+        val bytes = SaveBuilder().trainer("OLD", 1, 1).build(index = 4, block = 0)
+        SaveBuilder().trainer("NEW", 1, 1).writeBlock(bytes, block = 1, index = 5, rotation = 9)
+        // Damage one section of the newest copy (block 1).
+        bytes[0xE000 + 3 * 0x1000 + 0x20] = (bytes[0xE000 + 3 * 0x1000 + 0x20] + 1).toByte()
+        assertEquals("OLD", Gen3Save.parse(bytes).trainer.name)
+    }
+
     /** Pokémon Odyssey stores records unencrypted in G-A-E-M order with checksum 0. */
     @Test fun plainEncodedPokemonAreDetectedAndKept() {
         fun plain(species: Int, pid: Long): Pk3 = Pk3.create(pid, 0x0001_0002L).apply {
