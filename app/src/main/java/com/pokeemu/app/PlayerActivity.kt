@@ -24,7 +24,6 @@ import com.pokeemu.app.ui.LoadingScreen
 import com.pokeemu.app.ui.PauseMenu
 import com.pokeemu.app.ui.PlayerScreen
 import com.pokeemu.app.ui.PokeEmuTheme
-import com.pokeemu.app.ui.ResumePrompt
 import com.pokeemu.app.ui.StateSlotsDialog
 import com.pokeemu.core.Button
 import com.pokeemu.core.EmulatorSession
@@ -63,7 +62,7 @@ import java.io.File
 
 class PlayerActivity : ComponentActivity() {
 
-    private enum class Dialog { NONE, MENU, SAVE_STATE, LOAD_STATE, RESUME_PROMPT, CHEATS, EDIT_CONTROLS, CHALLENGES, CHEAT_SEARCH }
+    private enum class Dialog { NONE, MENU, SAVE_STATE, LOAD_STATE, CHEATS, EDIT_CONTROLS, CHALLENGES, CHEAT_SEARCH }
 
     private val storage by lazy { GameStorage(filesDir) }
     private var session: EmulatorSession? = null
@@ -87,7 +86,8 @@ class PlayerActivity : ComponentActivity() {
     /** Game volume (0..1) and mute, the same for every game. */
     private var volume by mutableStateOf(1f)
     private var muted by mutableStateOf(false)
-    private var askContinue by mutableStateOf(true)
+    /** Opt-in: start from the state saved when the game was last quit, instead of booting it. */
+    private var autoContinue by mutableStateOf(false)
 
     /** A curve so the slider's middle sounds like half as loud. */
     private fun applyVolume() { session?.setVolume(if (muted) 0f else volume * volume) }
@@ -186,10 +186,10 @@ class PlayerActivity : ComponentActivity() {
                             applyVolume()
                             saveSetting { putBoolean(PREF_MUTED, it) }
                         },
-                        askContinue = askContinue,
-                        onAskContinue = {
-                            askContinue = it
-                            saveSetting { putBoolean(PREF_ASK_CONTINUE, it) }
+                        autoContinue = autoContinue,
+                        onAutoContinue = {
+                            autoContinue = it
+                            saveSetting { putBoolean(PREF_AUTO_CONTINUE, it) }
                         },
                         dsLayout = if (isDs) dsLayout else null,
                         onDsLayout = { l ->
@@ -204,10 +204,6 @@ class PlayerActivity : ComponentActivity() {
                         slots = stateSlots,
                         onPick = { slot -> if (dialog == Dialog.SAVE_STATE) saveState(slot) else loadState(slot) },
                         onDismiss = { showDialog(Dialog.MENU) },
-                    )
-                    Dialog.RESUME_PROMPT -> ResumePrompt(
-                        onContinue = { loadState(GameStorage.AUTO_SLOT) },
-                        onFresh = { showDialog(Dialog.NONE) },
                     )
                     Dialog.CHEATS -> gameId?.let { id ->
                         // Its own window: the game's SurfaceView would draw over anything in this one.
@@ -320,8 +316,9 @@ class PlayerActivity : ComponentActivity() {
             }
             session!!.start()
             ready = true
-            askContinue = prefs.getBoolean(PREF_ASK_CONTINUE, true)
-            if (askContinue && storage.readState(id, GameStorage.AUTO_SLOT) != null) showDialog(Dialog.RESUME_PROMPT)
+            // The game boots normally; with the option on, it picks up where it was quit instead.
+            autoContinue = prefs.getBoolean(PREF_AUTO_CONTINUE, false)
+            if (autoContinue && storage.readState(id, GameStorage.AUTO_SLOT) != null) loadState(GameStorage.AUTO_SLOT)
             if (!pokemonTools) Unit
             else if (ndsHeader?.pokemonGen == 5) prepareGen5Overlay(id, local.file)
             else if (isDs) prepareDsOverlay(id, local.file)
@@ -655,7 +652,7 @@ class PlayerActivity : ComponentActivity() {
         private const val CHALLENGE_REFRESH_MS = 300L
         private const val PREF_VOLUME = "volume"
         private const val PREF_MUTED = "muted"
-        private const val PREF_ASK_CONTINUE = "ask_continue"
+        private const val PREF_AUTO_CONTINUE = "auto_continue"
         private const val PIN_REFRESH_MS = 150L
         private const val EXTRA_URI = "uri"
         private const val OVERLAY_REFRESH_MS = 500L

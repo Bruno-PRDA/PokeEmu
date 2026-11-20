@@ -294,8 +294,9 @@ fun PauseMenu(
     onVolume: (Float) -> Unit = {},
     onMute: (Boolean) -> Unit = {},
     /** Whether to offer the quit-time state when the game starts. */
-    askContinue: Boolean = true,
-    onAskContinue: (Boolean) -> Unit = {},
+    /** Start games where they were last quit (off: they boot normally). */
+    autoContinue: Boolean = false,
+    onAutoContinue: (Boolean) -> Unit = {},
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -340,10 +341,10 @@ fun PauseMenu(
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text("Offer \"Continue\" on launch", style = MaterialTheme.typography.labelLarge)
-                        Text("Ask to load the state saved when you quit", style = MaterialTheme.typography.bodySmall)
+                        Text("Continue where you left off", style = MaterialTheme.typography.labelLarge)
+                        Text("Start games from where you quit them, instead of booting them", style = MaterialTheme.typography.bodySmall)
                     }
-                    androidx.compose.material3.Switch(checked = askContinue, onCheckedChange = onAskContinue)
+                    androidx.compose.material3.Switch(checked = autoContinue, onCheckedChange = onAutoContinue)
                 }
                 FilledTonalButton(onClick = onCheats, Modifier.fillMaxWidth()) { Text("Cheats") }
                 FilledTonalButton(onClick = onCheatSearch, Modifier.fillMaxWidth()) { Text("Cheat search") }
@@ -411,13 +412,3 @@ private fun Thumbnail(file: File?) {
     }
 }
 
-@Composable
-fun ResumePrompt(onContinue: () -> Unit, onFresh: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onFresh,
-        title = { Text("Continue where you left off?") },
-        text = { Text("\"Boot game\" starts from your in-game save. \"Continue\" loads the state saved when you last quit. You can turn this question off in the pause menu.") },
-        confirmButton = { TextButton(onClick = onFresh) { Text("Boot game") } },
-        dismissButton = { TextButton(onClick = onContinue) { Text("Continue") } },
-    )
-}
