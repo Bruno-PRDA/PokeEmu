@@ -79,10 +79,7 @@ fun CheatsScreen(
     BackHandler(onBack = onBack)
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Cheats · $title", maxLines = 1) },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
-            )
+            PokeTopBar("Cheats", onBack = onBack)
         },
         floatingActionButton = {
             ExtendedFloatingActionButton(
@@ -250,6 +247,6 @@ private fun CheatEditor(
 
 @Composable
 private fun SectionTitle(text: String) = Text(
-    text, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary,
+    text.uppercase(), style = SectionHeadingStyle,
     modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 8.dp),
 )

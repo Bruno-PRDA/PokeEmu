@@ -1,5 +1,16 @@
 package com.pokeemu.app.ui
 
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.automirrored.filled.ExitToApp
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Gamepad
+import androidx.compose.material.icons.filled.EmojiEvents
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.Restore
+import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.PlayArrow
 import android.content.res.Configuration
 import android.graphics.BitmapFactory
 import android.view.SurfaceHolder
@@ -300,61 +311,114 @@ fun PauseMenu(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Resume") } },
-        title = { Text("Paused") },
+        containerColor = PokeColors.SurfaceLow,
+        confirmButton = {},
+        title = null,
         text = {
             // Scrolls so every item stays reachable in landscape, where the dialog is short.
-            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilledTonalButton(onClick = onSaveState, Modifier.fillMaxWidth()) { Text("Save state") }
-                FilledTonalButton(onClick = onLoadState, Modifier.fillMaxWidth()) { Text("Load state") }
-                Text("Volume", style = MaterialTheme.typography.labelLarge)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = { onMute(!muted) }) {
-                        Icon(
-                            if (muted || volume == 0f) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
-                            if (muted) "Unmute" else "Mute",
-                            tint = if (muted) MaterialTheme.colorScheme.error else LocalContentColor.current,
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { PixelText("PAUSED", pixel = 3.dp) }
+                // The main actions, big.
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    MenuTile(Icons.Default.PlayArrow, "Resume", Modifier.weight(1f), highlight = true, onClick = onDismiss)
+                    MenuTile(Icons.Default.Save, "Save state", Modifier.weight(1f), onClick = onSaveState)
+                    MenuTile(Icons.Default.Restore, "Load state", Modifier.weight(1f), onClick = onLoadState)
+                }
+
+                MenuSection("Sound") {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = { onMute(!muted) }) {
+                            Icon(
+                                if (muted || volume == 0f) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
+                                if (muted) "Unmute" else "Mute",
+                                tint = if (muted) MaterialTheme.colorScheme.error else PokeColors.Gold,
+                            )
+                        }
+                        androidx.compose.material3.Slider(
+                            value = volume,
+                            onValueChange = { onVolume(it); if (muted) onMute(false) },
+                            modifier = Modifier.weight(1f),
                         )
-                    }
-                    androidx.compose.material3.Slider(
-                        value = volume,
-                        onValueChange = { onVolume(it); if (muted) onMute(false) },
-                        modifier = Modifier.weight(1f),
-                        enabled = true,
-                    )
-                    Text(if (muted) "Muted" else "${(volume * 100).toInt()}%", Modifier.width(56.dp), textAlign = TextAlign.End,
-                        style = MaterialTheme.typography.labelMedium)
-                }
-                Text("Fast-forward speed", style = MaterialTheme.typography.labelLarge)
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    for (s in listOf(2, 3, 4, 8)) {
-                        FilterChip(selected = speed == s, onClick = { onSpeed(s) }, label = { Text("${s}×") })
+                        Text(if (muted) "Muted" else "${(volume * 100).toInt()}%", Modifier.width(52.dp), textAlign = TextAlign.End,
+                            style = MaterialTheme.typography.labelMedium)
                     }
                 }
-                if (dsLayout != null) {
-                    Text("Screens", style = MaterialTheme.typography.labelLarge)
+                MenuSection("Fast-forward") {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        for (s in listOf(2, 3, 4, 8)) {
+                            FilterChip(selected = speed == s, onClick = { onSpeed(s) }, label = { Text("${s}×") }, modifier = Modifier.weight(1f))
+                        }
+                    }
+                }
+                if (dsLayout != null) MenuSection("Screens") {
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         for (l in DsLayout.entries) {
                             FilterChip(selected = dsLayout == l, onClick = { onDsLayout(l) }, label = { Text(l.label) })
                         }
                     }
                 }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Continue where you left off", style = MaterialTheme.typography.labelLarge)
-                        Text("Start games from where you quit them, instead of booting them", style = MaterialTheme.typography.bodySmall)
+                MenuSection("Tools") {
+                    val tools = buildList {
+                        add(Triple(Icons.Default.Code, "Cheats", onCheats))
+                        add(Triple(Icons.Default.Search, "Cheat search", onCheatSearch))
+                        if (onChallenges != null) add(Triple(Icons.Default.EmojiEvents, "Challenges", onChallenges))
+                        add(Triple(Icons.Default.Gamepad, "Controls", onEditControls))
+                        add(Triple(Icons.Default.Image, "Set as cover", onSetCover))
                     }
-                    androidx.compose.material3.Switch(checked = autoContinue, onCheckedChange = onAutoContinue)
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        tools.chunked(3).forEach { row ->
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                row.forEach { (icon, label, action) -> MenuTile(icon, label, Modifier.weight(1f), onClick = action) }
+                                repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
+                            }
+                        }
+                    }
                 }
-                FilledTonalButton(onClick = onCheats, Modifier.fillMaxWidth()) { Text("Cheats") }
-                FilledTonalButton(onClick = onCheatSearch, Modifier.fillMaxWidth()) { Text("Cheat search") }
-                if (onChallenges != null) FilledTonalButton(onClick = onChallenges, Modifier.fillMaxWidth()) { Text("Challenges") }
-                FilledTonalButton(onClick = onEditControls, Modifier.fillMaxWidth()) { Text("Edit controls") }
-                FilledTonalButton(onClick = onSetCover, Modifier.fillMaxWidth()) { Text("Use this screen as cover") }
-                FilledTonalButton(onClick = onQuit, Modifier.fillMaxWidth()) { Text("Quit to library") }
+                MenuSection("Settings") {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Continue where you left off", style = MaterialTheme.typography.labelLarge)
+                            Text("Start games from where you quit them, instead of booting them", style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        androidx.compose.material3.Switch(checked = autoContinue, onCheckedChange = onAutoContinue)
+                    }
+                }
+                androidx.compose.material3.OutlinedButton(onClick = onQuit, Modifier.fillMaxWidth(),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.6f))) {
+                    Icon(Icons.AutoMirrored.Filled.ExitToApp, null, tint = MaterialTheme.colorScheme.error)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Quit to library", color = MaterialTheme.colorScheme.error)
+                }
             }
         },
     )
+}
+
+/** A titled group in the pause menu. */
+@Composable
+private fun MenuSection(title: String, content: @Composable () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(title.uppercase(), style = SectionHeadingStyle)
+        content()
+    }
+}
+
+/** A square icon-and-label button. */
+@Composable
+private fun MenuTile(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, modifier: Modifier = Modifier, highlight: Boolean = false, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(16.dp)
+    Column(
+        modifier.clip(shape)
+            .background(if (highlight) PokeColors.Red else PokeColors.Surface2)
+            .border(1.dp, if (highlight) PokeColors.Red else PokeColors.OutlineSoft, shape)
+            .clickable(onClick = onClick).padding(vertical = 12.dp, horizontal = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Icon(icon, null, tint = if (highlight) androidx.compose.ui.graphics.Color.White else PokeColors.Gold)
+        Text(label, style = MaterialTheme.typography.labelMedium, maxLines = 1, textAlign = TextAlign.Center,
+            color = if (highlight) androidx.compose.ui.graphics.Color.White else PokeColors.Text)
+    }
 }
 
 /** Lists save-state slots; [saving] picks between "save into" and "load from". */

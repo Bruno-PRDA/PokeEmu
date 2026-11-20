@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -114,6 +115,7 @@ fun LibraryScreen(
         topBar = {
             CenterAlignedTopAppBar(
                 title = { Logo() },
+                colors = androidx.compose.material3.TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = PokeColors.Background),
                 actions = {
                     Box {
                         IconButton(onClick = { menuOpen = true }) { Icon(Icons.Default.Menu, "Menu") }
@@ -142,6 +144,9 @@ fun LibraryScreen(
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
+                if (roms.isNotEmpty()) item(key = "heading", span = { GridItemSpan(maxLineSpan) }) {
+                    Text("YOUR GAMES · ${roms.size}", style = SectionHeadingStyle)
+                }
                 items(roms, key = { it.uri.toString() }) { rom ->
                     GameTile(rom, icon, cover, coverVersion, onClick = { onOpen(rom) }, onLongClick = { selected = rom })
                 }
@@ -230,8 +235,8 @@ fun LibraryScreen(
 @Composable
 private fun Logo() {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Image(painterResource(R.drawable.ic_launcher_foreground), null, Modifier.size(40.dp))
-        Text("PokeEmu", fontWeight = FontWeight.Bold)
+        Image(painterResource(R.drawable.ic_launcher_foreground), null, Modifier.size(44.dp))
+        PixelText("POKEEMU", pixel = 3.dp, top = Color(0xFFFFFFFF), bottom = PokeColors.Red, shadow = Color(0xFF3A0B0D))
     }
 }
 
@@ -248,8 +253,11 @@ private fun GameTile(
     var picture by remember(rom.uri) { mutableStateOf<Bitmap?>(null) }
     LaunchedEffect(rom.uri, coverVersion) { picture = cover(rom) }
     ElevatedCard(
-        Modifier.fillMaxWidth().aspectRatio(1f).clip(CardShape).combinedClickable(onClick = onClick, onLongClick = onLongClick),
+        Modifier.fillMaxWidth().aspectRatio(1f).clip(CardShape)
+            .border(1.dp, PokeColors.OutlineSoft, CardShape)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
         shape = CardShape,
+        colors = androidx.compose.material3.CardDefaults.elevatedCardColors(containerColor = PokeColors.Surface1),
     ) {
         val image = picture
         if (image != null) {
@@ -270,12 +278,7 @@ private fun GameTile(
                     ),
                 )
                 PlatformBadge(rom, Modifier.align(Alignment.TopStart).padding(8.dp))
-                Text(
-                    rom.name,
-                    Modifier.align(Alignment.BottomStart).padding(12.dp),
-                    style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold,
-                    color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis,
-                )
+                PixelText(rom.name, Modifier.align(Alignment.BottomStart).padding(10.dp), pixel = 1.5.dp)
             }
             return@ElevatedCard
         }
@@ -285,14 +288,8 @@ private fun GameTile(
             verticalArrangement = Arrangement.Center,
         ) {
             GameIcon(rom, icon, Modifier.size(72.dp))
-            Spacer(Modifier.height(10.dp))
-            Text(
-                rom.name,
-                style = MaterialTheme.typography.titleSmall,
-                textAlign = TextAlign.Center,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
+            Spacer(Modifier.height(12.dp))
+            PixelText(rom.name, pixel = 1.5.dp)
         }
     }
 }
@@ -301,16 +298,26 @@ private fun GameTile(
 private fun PlatformBadge(rom: RomEntry, modifier: Modifier) {
     Text(
         if (rom.header.platform == Platform.NDS) "DS" else "GBA",
-        modifier.background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(6.dp)).padding(horizontal = 6.dp, vertical = 2.dp),
-        color = Color.White, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold,
+        modifier.background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(50))
+            .border(1.dp, (if (rom.header.platform == Platform.NDS) PokeColors.Teal else PokeColors.Gold).copy(alpha = 0.7f), RoundedCornerShape(50))
+            .padding(horizontal = 8.dp, vertical = 2.dp),
+        color = if (rom.header.platform == Platform.NDS) PokeColors.Teal else PokeColors.Gold,
+        style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold,
     )
 }
 
 @Composable
 private fun AddTile(onAdd: () -> Unit) {
-    OutlinedCard(onClick = onAdd, modifier = Modifier.fillMaxWidth().aspectRatio(1f), shape = CardShape) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Icon(Icons.Default.Add, "Add game", Modifier.size(56.dp))
+    androidx.compose.material3.Card(
+        onClick = onAdd, modifier = Modifier.fillMaxWidth().aspectRatio(1f).border(1.dp, PokeColors.Outline, CardShape), shape = CardShape,
+        colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = PokeColors.SurfaceLow),
+    ) {
+        Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+            Box(Modifier.size(56.dp).clip(RoundedCornerShape(50)).background(PokeColors.Red), contentAlignment = Alignment.Center) {
+                Icon(Icons.Default.Add, "Add game", Modifier.size(32.dp), tint = Color.White)
+            }
+            Spacer(Modifier.height(12.dp))
+            PixelText("ADD GAME", pixel = 1.5.dp, top = PokeColors.Text, bottom = PokeColors.TextDim)
         }
     }
 }
@@ -326,7 +333,7 @@ private fun GameIcon(rom: RomEntry, icon: suspend (RomEntry) -> Bitmap?, modifie
     } else {
         val ds = rom.header.platform == Platform.NDS
         Box(
-            modifier.clip(RoundedCornerShape(16.dp)).background(if (ds) Color(0xFF455A64) else Color(0xFF5E35B1)),
+            modifier.clip(RoundedCornerShape(16.dp)).background(if (ds) PokeColors.Teal.copy(alpha = 0.25f) else PokeColors.RedDeep),
             contentAlignment = Alignment.Center,
         ) {
             Icon(Icons.Default.CatchingPokemon, null, Modifier.size(if (small) 28.dp else 36.dp), tint = Color.White.copy(alpha = 0.9f))
@@ -370,17 +377,50 @@ private fun GameOptions(
                 )
             }
         }
-        HorizontalDivider(Modifier.padding(vertical = 8.dp))
-        Option(Icons.Default.PlayArrow, "Play") { onAction(onOpen) }
-        Option(Icons.Default.Save, "Save manager") { onAction(onManageSaves) }
-        // Black, White and other DS games the Pokemon tools don't understand only play.
-        if (rom.header.pokemonTools) Option(Icons.Default.Edit, "Edit Pokémon") { onAction(onEditPokemon) }
-        Option(Icons.Default.Code, "Cheats") { onAction(onCheats) }
-        if (rom.header.liveTools) Option(Icons.Default.EmojiEvents, "Challenges") { onAction(onChallenges) }
-        Option(Icons.Default.DriveFileRenameOutline, "Rename") { onAction(onRename) }
-        Option(Icons.Default.Image, "Change cover picture") { onAction(onChangeCover) }
-        if (hasCustomCover) Option(Icons.Default.HideImage, "Remove cover picture") { onAction(onRemoveCover) }
-        Option(Icons.Default.Delete, "Remove game") { onAction(onRemove) }
+        androidx.compose.material3.Button(
+            onClick = { onAction(onOpen) },
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp).height(52.dp),
+        ) {
+            Icon(Icons.Default.PlayArrow, null)
+            Spacer(Modifier.width(8.dp))
+            Text("Play", style = MaterialTheme.typography.titleMedium)
+        }
+        val actions = buildList {
+            add(Triple(Icons.Default.Save, "Saves", onManageSaves))
+            // Black, White and other DS games the Pokemon tools don't understand only play.
+            if (rom.header.pokemonTools) add(Triple(Icons.Default.Edit, "Pokémon", onEditPokemon))
+            add(Triple(Icons.Default.Code, "Cheats", onCheats))
+            if (rom.header.liveTools) add(Triple(Icons.Default.EmojiEvents, "Challenges", onChallenges))
+            add(Triple(Icons.Default.DriveFileRenameOutline, "Rename", onRename))
+            add(Triple(Icons.Default.Image, "Cover", onChangeCover))
+            if (hasCustomCover) add(Triple(Icons.Default.HideImage, "No cover", onRemoveCover))
+        }
+        Column(Modifier.padding(horizontal = 24.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            actions.chunked(3).forEach { row ->
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    row.forEach { (icon, label, action) -> ActionTile(icon, label, Modifier.weight(1f)) { onAction(action) } }
+                    repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
+                }
+            }
+        }
+        TextButton(onClick = { onAction(onRemove) }, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+            Icon(Icons.Default.Delete, null, tint = MaterialTheme.colorScheme.error)
+            Spacer(Modifier.width(8.dp))
+            Text("Remove game", color = MaterialTheme.colorScheme.error)
+        }
+    }
+}
+
+/** A square button with an icon over its label, for the game options sheet. */
+@Composable
+private fun ActionTile(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Column(
+        modifier.clip(RoundedCornerShape(16.dp)).background(PokeColors.Surface2).border(1.dp, PokeColors.OutlineSoft, RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick).padding(vertical = 14.dp),
+        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Icon(icon, null, tint = PokeColors.Gold)
+        Text(label, style = MaterialTheme.typography.labelMedium, maxLines = 1)
     }
 }
 

@@ -168,10 +168,7 @@ fun SaveManagerScreen(rom: RomEntry, onBack: () -> Unit, onEditPokemon: () -> Un
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text(rom.fileName.substringBeforeLast('.')) },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
-            )
+            PokeTopBar(rom.fileName.substringBeforeLast('.'), onBack = onBack)
         },
     ) { padding ->
         val s = state

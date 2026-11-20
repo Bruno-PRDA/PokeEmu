@@ -55,10 +55,7 @@ fun ChallengesScreen(title: String, store: ChallengeStore, onBack: () -> Unit, o
     BackHandler(onBack = onBack)
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Challenges · $title", maxLines = 1) },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
-            )
+            PokeTopBar("Challenges", onBack = onBack)
         },
     ) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -121,7 +118,7 @@ fun ChallengesScreen(title: String, store: ChallengeStore, onBack: () -> Unit, o
                 }
             }
             if (deaths.isNotEmpty()) {
-                item { Text("Graveyard", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary) }
+                item { Text("GRAVEYARD", style = SectionHeadingStyle) }
                 items(deaths) { e ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("🪦", Modifier.padding(end = 10.dp))
@@ -134,7 +131,7 @@ fun ChallengesScreen(title: String, store: ChallengeStore, onBack: () -> Unit, o
                 }
             }
             if (areas.isNotEmpty()) {
-                item { Text("Areas", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary) }
+                item { Text("AREAS", style = SectionHeadingStyle) }
                 items(areas.sortedBy { it.place }) { a ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(if (a.caught) "✅" else "🌿", Modifier.padding(end = 10.dp))
@@ -149,7 +146,7 @@ fun ChallengesScreen(title: String, store: ChallengeStore, onBack: () -> Unit, o
             if (log.isNotEmpty()) {
                 item {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Log", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+                        Text("LOG", Modifier.weight(1f), style = SectionHeadingStyle)
                         TextButton(onClick = { store.clearLog(); log = emptyList(); areas = emptyList(); onChanged() }) { Text("Clear") }
                     }
                 }

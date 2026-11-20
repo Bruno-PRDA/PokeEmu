@@ -109,10 +109,10 @@ fun PokemonDetail(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Edit Pokémon") },
+            PokeTopBar(
+                "Edit",
                 navigationIcon = { IconButton(onClick = onCancel) { Icon(Icons.Default.Close, "Discard changes") } },
-                actions = { TextButton(onClick = { onDone(pk) }) { Text("Done") } },
+                actions = { androidx.compose.material3.Button(onClick = { onDone(pk) }, Modifier.padding(end = 8.dp)) { Text("Done") } },
             )
         },
     ) { padding ->
@@ -190,7 +190,7 @@ private fun Header(pk: Mon, editor: MonEditor, sprites: SpriteSource?, onRename:
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Row(Modifier.combinedClickable(onClick = {}, onLongClick = onRename), verticalAlignment = Alignment.CenterVertically) {
                     Text(name, style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    if (pk.isShiny) Text("  ★", color = MaterialTheme.colorScheme.tertiary, style = MaterialTheme.typography.titleMedium)
+                    if (pk.isShiny) Text("  ★", color = PokeColors.Gold, style = MaterialTheme.typography.titleMedium)
                 }
                 val gender = when (editor.gender(pk)) { Gender.MALE -> " ♂"; Gender.FEMALE -> " ♀"; else -> "" }
                 Text(
@@ -208,7 +208,7 @@ private fun Header(pk: Mon, editor: MonEditor, sprites: SpriteSource?, onRename:
 private fun Section(title: String, content: @Composable () -> Unit) {
     OutlinedCard(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+            Text(title.uppercase(), style = SectionHeadingStyle)
             content()
         }
     }

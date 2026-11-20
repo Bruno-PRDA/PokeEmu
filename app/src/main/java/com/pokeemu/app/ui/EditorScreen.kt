@@ -173,9 +173,9 @@ fun EditorScreen(rom: RomEntry, onBack: () -> Unit) {
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Edit Pokémon") },
-                navigationIcon = { IconButton(onClick = { if (dirty) confirmDiscard = true else onBack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
+            PokeTopBar(
+                "Pokemon",
+                onBack = { if (dirty) confirmDiscard = true else onBack() },
                 actions = {
                     if (e != null) IconButton(onClick = {
                         // The first free spot: the party if it has room, else the boxes.
@@ -184,7 +184,7 @@ fun EditorScreen(rom: RomEntry, onBack: () -> Unit) {
                         if (free == null) toast("No free spot: the party and every box are full") else newTarget = free
                     }) { Icon(Icons.Default.Add, "New Pokémon") }
                     if (e != null) IconButton(onClick = { showReport = true }) { Icon(Icons.Default.Info, "ROM data") }
-                    TextButton(onClick = ::save, enabled = dirty && !saving) { Text(if (saving) "Saving…" else "Save") }
+                    androidx.compose.material3.Button(onClick = ::save, enabled = dirty && !saving, modifier = Modifier.padding(end = 8.dp)) { Text(if (saving) "Saving…" else "Save") }
                 },
             )
         },
