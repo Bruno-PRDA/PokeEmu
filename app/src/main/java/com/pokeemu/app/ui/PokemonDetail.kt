@@ -6,6 +6,8 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.material3.AlertDialog
 
 import androidx.compose.foundation.background
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -337,53 +339,191 @@ private fun MovesTab(pk: Mon, editor: MonEditor, rom: GameData, edit: (() -> Uni
     }
 }
 
+/** Stats in the order the games show them: HP, Attack, Defense, Sp. Atk, Sp. Def, Speed (indices into the Mon's order). */
+private val DISPLAY_ORDER = listOf(0, 1, 2, 4, 5, 3)
+
+/** A colour per stat, for the bars. */
+private val STAT_COLORS = listOf(
+    Color(0xFFFF5959), Color(0xFFF5AC78), Color(0xFFFAE078), Color(0xFFFA92B2), Color(0xFF9DB7F5), Color(0xFFA7DB8D),
+)
+
+/** Short names for tight rows. */
+private val STAT_SHORT = listOf("HP", "Atk", "Def", "Spe", "SpA", "SpD")
+
 @NonSkippableComposable
 @Composable
 private fun StatsTab(pk: Mon, editor: MonEditor, edit: (() -> Unit) -> Unit) {
+    var section by remember { mutableIntStateOf(0) }
     val base = editor.data.base(pk.species)
     val level = editor.level(pk)
     val stats = if (base != null && level != null) GameRules.stats(base, level, pk.ivs, pk.evs, pk.nature) else null
-    val evTotal = pk.evs.sum()
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(
-            "EVs $evTotal / ${GameRules.MAX_EV_TOTAL}", Modifier.weight(1f), fontWeight = FontWeight.Bold,
-            color = if (evTotal > GameRules.MAX_EV_TOTAL) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
-        )
-        OutlinedButton(onClick = { edit { for (s in 0 until 6) pk.setIv(s, 31) } }) { Text("Max IVs") }
-        OutlinedButton(onClick = { edit { for (s in 0 until 6) pk.setEv(s, 0) } }) { Text("Clear EVs") }
-    }
-    OutlinedCard(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            for (s in 0 until 6) {
-                val mod = GameRules.natureMultiplierTenths(pk.nature, s)
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(STAT_NAMES[s], Modifier.width(72.dp), fontWeight = FontWeight.Bold)
-                        Text(
-                            when (mod) { 11 -> "▲"; 9 -> "▼"; else -> "" },
-                            Modifier.width(16.dp),
-                            color = if (mod == 11) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
-                        )
-                        val value = stats?.get(s)
-                        LinearProgressIndicator(
-                            progress = { ((value ?: 0) / 400f).coerceIn(0f, 1f) },
-                            modifier = Modifier.weight(1f).height(8.dp),
-                        )
-                        Text(value?.toString() ?: "—", Modifier.width(44.dp).padding(start = 8.dp), fontWeight = FontWeight.Bold)
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("IV ${pk.iv(s)}", Modifier.width(56.dp), style = MaterialTheme.typography.bodySmall)
-                        Slider(pk.iv(s).toFloat(), { v -> edit { pk.setIv(s, v.toInt()) } }, valueRange = 0f..31f, steps = 30, modifier = Modifier.weight(1f))
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("EV ${pk.ev(s)}", Modifier.width(56.dp), style = MaterialTheme.typography.bodySmall)
-                        Slider(pk.ev(s).toFloat(), { v -> edit { pk.setEv(s, v.toInt()) } }, valueRange = 0f..255f, modifier = Modifier.weight(1f))
-                    }
-                }
-            }
+
+    // Sub-sections: what the stats are, then the two things that shape them.
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+        listOf("Overview", "IVs", "EVs").forEachIndexed { i, label ->
+            FilterChip(selected = section == i, onClick = { section = i }, label = { Text(label) }, modifier = Modifier.weight(1f))
         }
     }
-    if (stats == null) Text("Calculated stats need base stats from the ROM, which weren't found.", style = MaterialTheme.typography.bodySmall)
+    when (section) {
+        0 -> StatsOverview(pk, base, stats)
+        1 -> IvEditor(pk, stats, edit)
+        else -> EvEditor(pk, stats, edit)
+    }
+    if (stats == null) Text("Final stats need base stats from the ROM, which weren't found.", style = MaterialTheme.typography.bodySmall)
+}
+
+/** Each stat's final value as a bar, with its base stat and the nature's effect. */
+@Composable
+private fun StatsOverview(pk: Mon, base: com.pokeemu.core.BaseStats?, stats: List<Int>?) {
+    val nature = GameData.NATURES.getOrElse(pk.nature) { "?" }
+    val up = DISPLAY_ORDER.firstOrNull { GameRules.natureMultiplierTenths(pk.nature, it) == 11 }
+    val down = DISPLAY_ORDER.firstOrNull { GameRules.natureMultiplierTenths(pk.nature, it) == 9 }
+    Section("Stats") {
+        Text(
+            if (up != null && down != null) "$nature nature: +${STAT_NAMES[up]}, −${STAT_NAMES[down]}" else "$nature nature: no effect on stats",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(Modifier.fillMaxWidth()) {
+            Text("", Modifier.width(64.dp))
+            Text("Base", Modifier.width(40.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.weight(1f))
+            Text("Stat", Modifier.width(48.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = androidx.compose.ui.text.style.TextAlign.End)
+        }
+        for (s in DISPLAY_ORDER) {
+            val mod = GameRules.natureMultiplierTenths(pk.nature, s)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    STAT_NAMES[s] + when (mod) { 11 -> " ▲"; 9 -> " ▼"; else -> "" },
+                    Modifier.width(64.dp), style = MaterialTheme.typography.bodyMedium,
+                    color = when (mod) { 11 -> Color(0xFFFF8A80); 9 -> Color(0xFF82B1FF); else -> MaterialTheme.colorScheme.onSurface },
+                )
+                Text(base?.stats?.getOrNull(s)?.toString() ?: "—", Modifier.width(40.dp), style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                val value = stats?.get(s)
+                Box(Modifier.weight(1f).height(10.dp).clip(RoundedCornerShape(5.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) {
+                    Box(Modifier.fillMaxWidth(((value ?: 0) / 500f).coerceIn(0f, 1f)).height(10.dp).background(STAT_COLORS[s]))
+                }
+                Text(value?.toString() ?: "—", Modifier.width(48.dp), fontWeight = FontWeight.Bold,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.End)
+            }
+        }
+        HorizontalDivider()
+        Row {
+            Text("Base total", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(base?.stats?.sum()?.toString() ?: "—", style = MaterialTheme.typography.bodySmall)
+        }
+    }
+    Section("Potential") {
+        val ivTotal = pk.ivs.sum()
+        val evTotal = pk.evs.sum()
+        TotalBar("IVs", ivTotal, 186, "${pk.ivs.count { it == 31 }} of 6 perfect")
+        TotalBar("EVs", evTotal, GameRules.MAX_EV_TOTAL, if (evTotal > GameRules.MAX_EV_TOTAL) "over the limit" else "${GameRules.MAX_EV_TOTAL - evTotal} left")
+    }
+}
+
+@Composable
+private fun TotalBar(label: String, value: Int, max: Int, note: String) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row {
+            Text(label, Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
+            Text("$value / $max · $note", style = MaterialTheme.typography.bodySmall,
+                color = if (value > max) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        LinearProgressIndicator(progress = { (value / max.toFloat()).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth().height(6.dp))
+    }
+}
+
+/** IVs: 0–31 per stat, with quick settings. */
+@Composable
+private fun IvEditor(pk: Mon, stats: List<Int>?, edit: (() -> Unit) -> Unit) {
+    Section("Individual values (IVs)") {
+        Text("Fixed when caught, 0 to 31 per stat. Higher means a stronger stat.", style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { edit { for (s in 0 until 6) pk.setIv(s, 31) } }, Modifier.weight(1f)) { Text("All 31") }
+            OutlinedButton(onClick = { edit { for (s in 0 until 6) pk.setIv(s, 0) } }, Modifier.weight(1f)) { Text("All 0") }
+            OutlinedButton(onClick = { edit { for (s in 0 until 6) pk.setIv(s, kotlin.random.Random.nextInt(32)) } }, Modifier.weight(1f)) { Text("Random") }
+        }
+        for (s in DISPLAY_ORDER) {
+            StatStepper(
+                stat = s, value = pk.iv(s), max = 31, step = 1, result = stats?.get(s),
+                onSet = { v -> edit { pk.setIv(s, v) } },
+                quick = "31" to 31,
+            )
+        }
+    }
+}
+
+/** EVs: earned by battling, up to 252 per stat and 510 in all. */
+@Composable
+private fun EvEditor(pk: Mon, stats: List<Int>?, edit: (() -> Unit) -> Unit) {
+    val total = pk.evs.sum()
+    val left = GameRules.MAX_EV_TOTAL - total
+    Section("Effort values (EVs)") {
+        Text("Earned by battling: up to 252 per stat, ${GameRules.MAX_EV_TOTAL} in all. Every 4 points add 1 to the stat at level 100.",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        TotalBar("Total", total, GameRules.MAX_EV_TOTAL, if (left < 0) "over the limit" else "$left left")
+        OutlinedButton(onClick = { edit { for (s in 0 until 6) pk.setEv(s, 0) } }, Modifier.fillMaxWidth()) { Text("Clear all EVs") }
+        for (s in DISPLAY_ORDER) {
+            val current = pk.ev(s)
+            // "Max" fills this stat up to 252, as far as the 510 total allows.
+            val maxHere = (current + left.coerceAtLeast(0)).coerceAtMost(252)
+            StatStepper(
+                stat = s, value = current, max = 252, step = 4, result = stats?.get(s),
+                onSet = { v -> edit { pk.setEv(s, v) } },
+                quick = "Max" to maxHere,
+            )
+        }
+    }
+}
+
+/**
+ * One stat's value with − / + buttons ([step] at a time), the number itself
+ * (tap it to type), a quick button and the stat it gives.
+ */
+@Composable
+private fun StatStepper(stat: Int, value: Int, max: Int, step: Int, result: Int?, onSet: (Int) -> Unit, quick: Pair<String, Int>) {
+    var typing by remember { mutableStateOf(false) }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.width(4.dp).height(32.dp).background(STAT_COLORS[stat], RoundedCornerShape(2.dp)))
+            Column(Modifier.width(72.dp).padding(start = 8.dp)) {
+                Text(STAT_NAMES[stat], style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                Text(result?.let { "stat $it" } ?: "", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Spacer(Modifier.weight(1f))
+            IconButton(onClick = { onSet((value - step).coerceAtLeast(0)) }, enabled = value > 0) { Text("−", style = MaterialTheme.typography.titleLarge) }
+            Surface(
+                onClick = { typing = true }, shape = RoundedCornerShape(8.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                modifier = Modifier.width(56.dp),
+            ) {
+                Text(value.toString(), Modifier.padding(vertical = 8.dp), fontWeight = FontWeight.Bold,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            }
+            IconButton(onClick = { onSet((value + step).coerceAtMost(max)) }, enabled = value < max) { Text("+", style = MaterialTheme.typography.titleLarge) }
+            TextButton(onClick = { onSet(quick.second) }, enabled = value != quick.second) { Text(quick.first) }
+        }
+        LinearProgressIndicator(
+            progress = { value / max.toFloat() }, modifier = Modifier.fillMaxWidth().height(3.dp),
+            color = STAT_COLORS[stat], trackColor = MaterialTheme.colorScheme.surfaceVariant,
+        )
+    }
+    if (typing) {
+        var text by remember { mutableStateOf(value.toString()) }
+        val v = text.toIntOrNull()?.takeIf { it in 0..max }
+        AlertDialog(
+            onDismissRequest = { typing = false },
+            title = { Text(STAT_NAMES[stat]) },
+            text = {
+                OutlinedTextField(text, { text = it.filter(Char::isDigit).take(3) }, singleLine = true, isError = v == null,
+                    supportingText = { Text("0 to $max") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+            },
+            confirmButton = { TextButton(enabled = v != null, onClick = { typing = false; onSet(v!!) }) { Text("OK") } },
+            dismissButton = { TextButton(onClick = { typing = false }) { Text("Cancel") } },
+        )
+    }
 }
 
 // ---- small widgets -------------------------------------------------------------------------
