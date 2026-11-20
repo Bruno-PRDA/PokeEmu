@@ -72,6 +72,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -103,14 +104,16 @@ private sealed interface Held {
 }
 
 // A clean dark palette.
-private val Bg = Color(0xFF111317)
-private val Panel = Color(0xFF1A1D23)
-private val PanelHeader = Color(0xFF22262E)
-private val Spot = Color(0xFF242830)
-private val SpotLine = Color(0xFF2E333C)
-private val Accent = Color(0xFFFFC94A)
-private val TextMain = Color(0xFFECEFF4)
-private val TextDim = Color(0xFF9AA3B2)
+private val Bg = PokeColors.Background
+private val Panel = PokeColors.SurfaceLow
+private val PanelHeader = PokeColors.Surface2
+private val Spot = PokeColors.Surface2
+private val SpotLine = PokeColors.OutlineSoft
+private val Accent = PokeColors.Gold
+private val TextMain = PokeColors.Text
+private val TextDim = PokeColors.TextDim
+private val Good = Color(0xFF7BD88F)
+private val Bad = Color(0xFFFF8A80)
 
 /**
  * The global Pokémon PC, laid out like the games' own PC: the global boxes on
@@ -281,8 +284,15 @@ fun GlobalPcScreen(games: List<RomEntry>, cover: suspend (RomEntry) -> Bitmap?, 
             BackHandler { details = null }
             val from = games.firstOrNull { it.id == d.mon.fromRomId }
             val fromPlaces by produceState(emptyMap<Int, String>(), from) { value = from?.let { com.pokeemu.app.MetInfo.places(context, it) }.orEmpty() }
+            val fitList by produceState<List<Transfer.Fit?>?>(null, d.mon) {
+                val acc = MutableList<Transfer.Fit?>(games.size) { null }
+                value = acc.toList()
+                com.pokeemu.app.OpenSave.fits(context, d.mon, games) { i, fit -> acc[i] = fit; value = acc.toList() }
+            }
             StoredDetail(
                 s = d.mon, sprite = pc.spriteFile(d.mon), places = fromPlaces,
+                fits = fitList?.let { l -> games.zip(l).mapNotNull { (g, f) -> f?.let { g to it } } },
+                checking = fitList?.any { it == null } != false,
                 onClose = { details = null },
                 onExport = { exportBytes = d.mon.bytes; exportLauncher.launch("${d.mon.speciesName}.${d.mon.format}") },
                 onRelease = {
@@ -305,11 +315,7 @@ fun GlobalPcScreen(games: List<RomEntry>, cover: suspend (RomEntry) -> Bitmap?, 
     Scaffold(
         containerColor = Bg,
         topBar = {
-            TopAppBar(
-                title = { Text("Pokémon PC", color = TextMain) },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = TextMain) } },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Bg),
-            )
+            PokeTopBar("Pokemon PC", onBack = onBack)
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 10.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -344,7 +350,18 @@ fun GlobalPcScreen(games: List<RomEntry>, cover: suspend (RomEntry) -> Bitmap?, 
                 val g = game
                 val o = open
                 when {
-                    g == null -> GamePicker(games, cover, onPick = ::openGame)
+                    g == null -> {
+                        // Holding a stored Pokémon: say which games can take it.
+                        val heldStored = (held as? Held.Stored)?.mon
+                        val fits by produceState<List<Transfer.Fit?>?>(null, heldStored) {
+                            value = null
+                            if (heldStored == null) return@produceState
+                            val acc = MutableList<Transfer.Fit?>(games.size) { null }
+                            value = acc.toList()
+                            com.pokeemu.app.OpenSave.fits(context, heldStored, games) { i, fit -> acc[i] = fit; value = acc.toList() }
+                        }
+                        GamePicker(games, cover, onPick = ::openGame, fits = fits.takeIf { heldStored != null })
+                    }
                     o == null -> GamePanelFrame(g, onGames = ::closeGame) {
                         PanelNote(status ?: "", loading = status?.startsWith("Can't") != true)
                     }
@@ -400,7 +417,7 @@ private const val SLOTS = 30
 // ---- game picker ------------------------------------------------------------------------
 
 @Composable
-private fun GamePicker(games: List<RomEntry>, cover: suspend (RomEntry) -> Bitmap?, onPick: (RomEntry) -> Unit) {
+private fun GamePicker(games: List<RomEntry>, cover: suspend (RomEntry) -> Bitmap?, onPick: (RomEntry) -> Unit, fits: List<Transfer.Fit?>? = null) {
     Column(Modifier.fillMaxSize().clip(RoundedCornerShape(16.dp)).background(Panel)) {
         Row(Modifier.fillMaxWidth().background(PanelHeader).padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             PixelText("SELECT A GAME", pixel = 2.5.dp, top = Color(0xFFE8ECF2), bottom = Color(0xFFA8B2C2))
@@ -415,24 +432,28 @@ private fun GamePicker(games: List<RomEntry>, cover: suspend (RomEntry) -> Bitma
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            items(games, key = { it.uri.toString() }) { rom -> GameCard(rom, cover) { onPick(rom) } }
+            items(games.size, key = { games[it].uri.toString() }) { i -> GameCard(games[i], cover, fits?.getOrNull(i), checking = fits != null && fits.getOrNull(i) == null) { onPick(games[i]) } }
         }
     }
 }
 
 @Composable
-private fun GameCard(rom: RomEntry, cover: suspend (RomEntry) -> Bitmap?, onClick: () -> Unit) {
+private fun GameCard(rom: RomEntry, cover: suspend (RomEntry) -> Bitmap?, fit: Transfer.Fit?, checking: Boolean = false, onClick: () -> Unit) {
     val image by produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, rom.uri) { value = cover(rom)?.asImageBitmap() }
     Column(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Spot)
-            .border(1.dp, SpotLine, RoundedCornerShape(12.dp)).clickable(onClick = onClick),
+            .border(if (fit?.ok == true) 2.dp else 1.dp, if (fit?.ok == true) Good else SpotLine, RoundedCornerShape(12.dp))
+            .graphicsLayer { alpha = if (fit?.ok == false) 0.45f else 1f }
+            .clickable(onClick = onClick),
     ) {
         Box(Modifier.fillMaxWidth().aspectRatio(3f / 2f).background(Color(0xFF0C0E11)), contentAlignment = Alignment.Center) {
             image?.let { Image(it, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, filterQuality = FilterQuality.None) }
         }
         Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             PixelText(rom.name, pixel = 1.5.dp)
-            Text(Transfer.generationLabel("pk${rom.header.pokemonGen ?: 3}"), color = TextDim, fontSize = 10.sp, maxLines = 1)
+            if (fit != null) FitLine(fit, compact = true)
+            else if (checking) Text("Checking…", color = TextDim, fontSize = 10.sp, maxLines = 1)
+            else Text(Transfer.generationLabel("pk${rom.header.pokemonGen ?: 3}"), color = TextDim, fontSize = 10.sp, maxLines = 1)
         }
     }
 }
@@ -619,17 +640,16 @@ private fun parse(s: StoredMon): Mon? = runCatching {
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun StoredDetail(s: StoredMon, sprite: File, places: Map<Int, String>, onClose: () -> Unit, onExport: () -> Unit, onRelease: () -> Unit) {
+private fun StoredDetail(
+    s: StoredMon, sprite: File, places: Map<Int, String>, fits: List<Pair<RomEntry, Transfer.Fit>>?, checking: Boolean,
+    onClose: () -> Unit, onExport: () -> Unit, onRelease: () -> Unit,
+) {
     val mon = remember(s) { parse(s) }
     var release by remember { mutableStateOf(false) }
     Scaffold(
         containerColor = Bg,
         topBar = {
-            TopAppBar(
-                title = { Text(displayName(s.speciesName, s.nickname), color = TextMain, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                navigationIcon = { IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = TextMain) } },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Bg),
-            )
+            PokeTopBar("Details", onBack = onClose)
         },
     ) { padding ->
         Column(
@@ -672,6 +692,16 @@ private fun StoredDetail(s: StoredMon, sprite: File, places: Map<Int, String>, o
                 mon?.let { com.pokeemu.app.MetInfo.describe(it, places) }?.let { Text("Met: $it", color = TextMain, fontSize = 14.sp) }
                 Text(Transfer.generationLabel(s.format) + " Pokémon", color = TextDim, fontSize = 12.sp)
             }
+            DetailCard("Where it can go") {
+                if (fits.isNullOrEmpty() && !checking) Text("No games with a save yet.", color = TextDim, fontSize = 13.sp)
+                if (checking) Text("Checking your games…", color = TextDim, fontSize = 13.sp)
+                fits.orEmpty().sortedByDescending { it.second.ok }.forEach { (rom, fit) ->
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(rom.name, color = TextMain, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                        FitLine(fit)
+                    }
+                }
+            }
             Text("To edit it, move it into a game and hold it there.", color = TextDim, fontSize = 12.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 FilledTonalButton(onClick = onExport, Modifier.weight(1f)) { Text("Export file") }
@@ -699,3 +729,13 @@ private fun DetailCard(title: String, content: @Composable () -> Unit) {
 
 private fun displayName(species: String, nickname: String) =
     if (nickname.isBlank() || nickname.equals(species, ignoreCase = true)) species else "$nickname ($species)"
+
+/** "✓ Fits as it is" or "✗ Zekrom isn't in this game". */
+@Composable
+private fun FitLine(fit: Transfer.Fit, compact: Boolean = false) {
+    Text(
+        (if (fit.ok) "✓ " else "✗ ") + fit.message,
+        color = if (fit.ok) Good else Bad, fontSize = if (compact) 10.sp else 12.sp,
+        maxLines = if (compact) 2 else 3, overflow = TextOverflow.Ellipsis,
+    )
+}

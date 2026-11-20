@@ -49,6 +49,40 @@ class OpenSave(
             }
         }.getOrNull()
 
+        /** A game's ROM data (names, stats...), read once and cached; null if it can't be read. */
+        suspend fun gameData(context: Context, rom: RomEntry): com.pokeemu.core.GameData? = withContext(Dispatchers.IO) {
+            runCatching {
+                val local = RomLibrary(context).localCopy(rom.uri)
+                val store = RomDataStore(GameStorage(context.filesDir))
+                when {
+                    rom.header.pokemonGen == 5 -> store.gen5(local.id, local.file)
+                    rom.header.platform == Platform.NDS -> store.gen4(local.id, local.file)
+                    else -> store.cached(local.id) ?: store.scanAndCache(local.id, local.file.readBytes())
+                }
+            }.getOrNull()
+        }
+
+        /**
+         * Whether [stored] can go into each of [games], reported game by game to
+         * [onEach] (index, result). Games its generation rules out are answered
+         * without reading their ROM.
+         */
+        suspend fun fits(context: Context, stored: com.pokeemu.core.StoredMon, games: List<RomEntry>, onEach: (Int, com.pokeemu.core.Transfer.Fit) -> Unit) {
+            val order = games.indices.sortedBy { i -> if (com.pokeemu.core.Transfer.canGo(stored.format, format(games[i]))) 1 else 0 }
+            for (i in order) {
+                val rom = games[i]
+                val fmt = format(rom)
+                val fit = if (!com.pokeemu.core.Transfer.canGo(stored.format, fmt)) com.pokeemu.core.Transfer.fit(stored, fmt, "", null)
+                else {
+                    val id = withContext(Dispatchers.IO) { runCatching { RomLibrary(context).localCopy(rom.uri).id }.getOrDefault(rom.id) }
+                    com.pokeemu.core.Transfer.fit(stored, fmt, id, gameData(context, rom))
+                }
+                onEach(i, fit)
+            }
+        }
+
+        private fun format(rom: RomEntry) = "pk${rom.header.pokemonGen ?: 3}"
+
         /**
          * Reads the ROM's names/data (cached after the first time) and parses the
          * save. Throws with a message for the user if either can't be read.

@@ -54,6 +54,25 @@ object CheatCodes {
      * GBA (GameShark / Action Replay / CodeBreaker): lines of 8+8 or 8+4 hex digits.
      * DS (Action Replay): lines of 8+8 hex digits.
      */
+    /**
+     * A cheat that keeps [value] ([size] bytes) at [address]: DS Action Replay
+     * constant writes, or GBA CodeBreaker constant writes (16-bit at most, so a
+     * 4-byte value takes two lines). Lines as [parse] returns them.
+     */
+    fun freezeCode(platform: Platform, address: Long, size: Int, value: Long): List<String> {
+        require(size == 1 || size == 2 || size == 4)
+        val a = address and 0x0FFFFFFF
+        return if (platform == Platform.NDS) when (size) {
+            4 -> listOf("0%07X %08X".format(a, value and 0xFFFFFFFFL))
+            2 -> listOf("1%07X %08X".format(a, value and 0xFFFF))
+            else -> listOf("2%07X %08X".format(a, value and 0xFF))
+        } else when (size) {
+            1 -> listOf("3%07X %04X".format(a, value and 0xFF))
+            2 -> listOf("8%07X %04X".format(a, value and 0xFFFF))
+            else -> listOf("8%07X %04X".format(a, value and 0xFFFF), "8%07X %04X".format(a + 2, (value shr 16) and 0xFFFF))
+        }
+    }
+
     fun parse(text: String, platform: Platform): List<String> {
         val tokens = text.uppercase().split(Regex("[\\s+\\-:]+")).filter { it.isNotEmpty() }
         require(tokens.isNotEmpty()) { "Enter a code" }

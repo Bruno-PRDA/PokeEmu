@@ -57,6 +57,8 @@ interface CheatSearchHost {
     val pins: List<PinStore.Pin>
     fun putPin(pin: PinStore.Pin)
     fun removePin(address: Long)
+    /** Adds a cheat code keeping [value] at [address] to the game's Cheats list; returns its code. */
+    fun saveAsCheat(name: String, address: Long, size: Int, value: Long): String?
 }
 
 /**
@@ -73,14 +75,13 @@ fun CheatSearchScreen(host: CheatSearchHost, onBack: () -> Unit) {
     var error by remember { mutableStateOf<String?>(null) }
     /** A result being set or frozen. */
     var editing by remember { mutableStateOf<Pair<CheatSearch.Result, Boolean>?>(null) }
+    /** The code just saved, shown so it can be noted or shared. */
+    var saved by remember { mutableStateOf<Pair<String, String>?>(null) }
 
     BackHandler(onBack = onBack)
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Cheat search") },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back to the game") } },
-            )
+            PokeTopBar("Cheat search", onBack = onBack)
         },
     ) { padding ->
         tick.let { }
@@ -155,7 +156,7 @@ fun CheatSearchScreen(host: CheatSearchHost, onBack: () -> Unit) {
                 Text("Addresses are listed once 200 or fewer are left.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             if (results.isNotEmpty()) {
-                item { Text("Found", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary) }
+                item { Text("FOUND", style = SectionHeadingStyle) }
                 items(results, key = { it.address }) { r ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
@@ -170,7 +171,7 @@ fun CheatSearchScreen(host: CheatSearchHost, onBack: () -> Unit) {
             }
             val pins = host.pins
             if (pins.isNotEmpty()) {
-                item { Text("Frozen values", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary) }
+                item { Text("FROZEN VALUES", style = SectionHeadingStyle) }
                 items(pins, key = { "pin" + it.address }) { pin ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
@@ -178,6 +179,10 @@ fun CheatSearchScreen(host: CheatSearchHost, onBack: () -> Unit) {
                             Text("%08X = %d".format(pin.address, pin.value), fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
+                        TextButton(onClick = {
+                            val name = pin.label.ifBlank { "Value at %08X".format(pin.address) }
+                            host.saveAsCheat(name, pin.address, pin.size, pin.value)?.let { saved = name to it }
+                        }) { Text("To Cheats") }
                         Switch(checked = pin.enabled, onCheckedChange = { on -> host.putPin(pin.copy(enabled = on)); tick++ })
                         IconButton(onClick = { host.removePin(pin.address); tick++ }) { Icon(Icons.Default.Delete, "Remove") }
                     }
@@ -205,7 +210,11 @@ fun CheatSearchScreen(host: CheatSearchHost, onBack: () -> Unit) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(v, { v = it.filter(Char::isDigit).take(10) }, label = { Text("Value") }, singleLine = true, isError = value == null,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
-                    if (freeze) OutlinedTextField(label, { label = it.take(30) }, label = { Text("Name (e.g. Money)") }, singleLine = true)
+                    if (freeze) {
+                        OutlinedTextField(label, { label = it.take(30) }, label = { Text("Name (e.g. Money)") }, singleLine = true)
+                        Text("Freeze keeps it while you play. Save as cheat adds a code to this game's Cheats list instead, to switch on and off or share.",
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
             },
             confirmButton = {
@@ -216,7 +225,38 @@ fun CheatSearchScreen(host: CheatSearchHost, onBack: () -> Unit) {
                     tick++
                 }) { Text(if (freeze) "Freeze" else "Set") }
             },
-            dismissButton = { TextButton(onClick = { editing = null }) { Text("Cancel") } },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = { editing = null }) { Text("Cancel") }
+                    if (freeze) TextButton(enabled = value != null, onClick = {
+                        editing = null
+                        val name = label.trim().ifBlank { "Value at %08X".format(r.address) }
+                        host.saveAsCheat(name, r.address, s, value!!)?.let { saved = name to it }
+                    }) { Text("Save as cheat") }
+                }
+            },
+        )
+    }
+
+    saved?.let { (name, code) ->
+        val context = androidx.compose.ui.platform.LocalContext.current
+        AlertDialog(
+            onDismissRequest = { saved = null },
+            title = { Text("Added to Cheats") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("\"$name\" is in this game's Cheats list and switched on.")
+                    Text(code, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodyLarge)
+                }
+            },
+            confirmButton = { TextButton(onClick = { saved = null }) { Text("OK") } },
+            dismissButton = {
+                TextButton(onClick = {
+                    context.startActivity(android.content.Intent.createChooser(
+                        android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain")
+                            .putExtra(android.content.Intent.EXTRA_TEXT, "$name\n$code"), "Share cheat"))
+                }) { Text("Share") }
+            },
         )
     }
 }

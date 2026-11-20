@@ -247,6 +247,42 @@ object Transfer {
     private fun hasBaseStats(data: GameData) = (1 until minOf(data.speciesNames.size, 30)).any { data.base(it) != null }
 
     /** "GBA", "Gen 4 DS", "Gen 5 DS" for a record format. */
+    /** Whether a stored Pokémon can go into a game, and what it would lose (see [fit]). */
+    data class Fit(val ok: Boolean, val message: String)
+
+    /**
+     * Whether [stored] can be moved into a game whose Pokémon are [targetFormat]
+     * files and whose ROM data is [data] (the same checks [adapt] makes, without
+     * a save): the reason if not, else what it would leave behind.
+     */
+    /** True if a [from] Pokémon can be moved into a [to] game at all (same generation, or a newer one). */
+    fun canGo(from: String, to: String) = from == to || converters[from to to] != null
+
+    fun fit(stored: StoredMon, targetFormat: String, targetRomId: String, data: GameData?): Fit {
+        if (!canGo(stored.format, targetFormat)) {
+            return Fit(false, "A ${generationLabel(stored.format)} Pokémon can't go back to a ${generationLabel(targetFormat)} game")
+        }
+        if (stored.format == targetFormat && stored.fromRomId == targetRomId) return Fit(true, "Its own game")
+        if (data == null || data.speciesNames.isEmpty()) return Fit(false, "This game's Pokémon names couldn't be read")
+        if (isNumbered(stored.speciesName)) return Fit(false, "Its species is unknown, so it can only go back to its own game")
+        val species = find(data.speciesNames, stored.speciesName)
+        if (species == null || !isRealSpecies(data, species)) return Fit(false, "${stored.speciesName} isn't in this game")
+        val notes = mutableListOf<String>()
+        when {
+            stored.format == "pk3" && targetFormat == "pk4" -> notes += "through Pal Park"
+            stored.format != "pk5" && targetFormat == "pk5" -> notes += "through Poké Transfer"
+        }
+        if (data.moveNames.isNotEmpty() && stored.moveNames.none(::isNumbered)) {
+            val (known, lost) = stored.moveNames.partition { find(data.moveNames, it) != null }
+            if (known.isEmpty()) return Fit(false, "None of its moves exist in this game")
+            if (lost.isNotEmpty()) notes += "forgets ${lost.joinToString()}"
+        }
+        stored.itemName?.let { item ->
+            if (data.itemNames.isEmpty() || isNumbered(item) || find(data.itemNames, item) == null) notes += "leaves its $item behind"
+        }
+        return Fit(true, notes.joinToString(" · ").replaceFirstChar { it.uppercase() }.ifEmpty { "Fits as it is" })
+    }
+
     fun generationLabel(format: String) = when (format) {
         "pk3" -> "GBA"
         "pk4" -> "Gen 4 DS"

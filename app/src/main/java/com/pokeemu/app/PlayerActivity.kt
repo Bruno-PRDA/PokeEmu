@@ -430,6 +430,14 @@ class PlayerActivity : ComponentActivity() {
         override val pins get() = this@PlayerActivity.pins
         override fun putPin(pin: com.pokeemu.saves.PinStore.Pin) { store()?.let { it.put(pin); this@PlayerActivity.pins = it.list() } }
         override fun removePin(address: Long) { store()?.let { it.remove(address); this@PlayerActivity.pins = it.list() } }
+        override fun saveAsCheat(name: String, address: Long, size: Int, value: Long): String? {
+            val id = gameId ?: return null
+            val lines = com.pokeemu.saves.CheatCodes.freezeCode(if (isDs) Platform.NDS else Platform.GBA, address, size, value)
+            val cheats = CheatStore(storage, id)
+            cheats.save(cheats.load() + com.pokeemu.saves.Cheat(name, lines))
+            applyCheats()
+            return lines.joinToString("\n")
+        }
     }
 
     /** Keeps frozen values written while the game runs. */

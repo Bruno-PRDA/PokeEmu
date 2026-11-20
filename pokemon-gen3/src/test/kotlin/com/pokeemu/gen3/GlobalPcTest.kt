@@ -227,4 +227,24 @@ class GlobalPcTest {
         val numbered = stored.copy(speciesName = "#25")
         assertFailsWith<IllegalArgumentException> { Transfer.adapt(numbered, editor(vanilla), "rom-b") }
     }
+
+    @Test fun fitSaysWhichGamesCanTakeIt() {
+        val src = editor(vanilla, boxed = pikachu(party = false))
+        val stored = pc().deposit(src, src[Slot.Box(0, 0)]!!, "Emerald", "rom-a")
+        assertEquals(Transfer.Fit(true, "Its own game"), Transfer.fit(stored, "pk3", "rom-a", vanilla))
+        assertTrue(Transfer.fit(stored, "pk3", "rom-b", hack).ok)
+        // A game without Pikachu, or with none of its moves, can't take it.
+        val noPikachu = RomData(
+            speciesNames = List(30) { "MON$it" }, moveNames = vanilla.moveNames, abilityNames = vanilla.abilityNames,
+            itemNames = vanilla.itemNames, baseStats = vanilla.baseStats, movePp = List(100) { 10 }, report = emptyList(),
+        )
+        assertEquals(Transfer.Fit(false, "PIKACHU isn't in this game"), Transfer.fit(stored, "pk3", "rom-c", noPikachu))
+        val noMoves = RomData(
+            speciesNames = vanilla.speciesNames, moveNames = List(100) { "OTHER$it" }, abilityNames = vanilla.abilityNames,
+            itemNames = List(10) { "X$it" }, baseStats = vanilla.baseStats, movePp = List(100) { 10 }, report = emptyList(),
+        )
+        assertEquals(false, Transfer.fit(stored, "pk3", "rom-d", noMoves).ok)
+        // No converter registered here: a GBA Pokémon can't go anywhere else.
+        assertEquals(false, Transfer.fit(stored, "pk2", "rom-e", vanilla).ok)
+    }
 }

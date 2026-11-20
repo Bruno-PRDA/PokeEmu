@@ -46,4 +46,18 @@ class CheatsTest {
         assertEquals(listOf("82025840 0063+82025842 0001"), store.enabledCodes())
         assertTrue(CheatStore(storage, "other").load().isEmpty())
     }
+
+    @Test fun freezeCodesInEachFormat() {
+        assertEquals(listOf("22123456 0000002A"), CheatCodes.freezeCode(Platform.NDS, 0x02123456, 1, 42))
+        assertEquals(listOf("12123456 0000BEEF"), CheatCodes.freezeCode(Platform.NDS, 0x02123456, 2, 0xBEEF))
+        assertEquals(listOf("02123456 12345678"), CheatCodes.freezeCode(Platform.NDS, 0x02123456, 4, 0x12345678))
+        assertEquals(listOf("32025E80 0063"), CheatCodes.freezeCode(Platform.GBA, 0x02025E80, 1, 99))
+        assertEquals(listOf("83005FA0 0801"), CheatCodes.freezeCode(Platform.GBA, 0x03005FA0, 2, 0x801))
+        assertEquals(listOf("82025E80 5678", "82025E82 1234"), CheatCodes.freezeCode(Platform.GBA, 0x02025E80, 4, 0x12345678))
+        // They're valid codes for the Cheats list.
+        for (p in listOf(Platform.GBA, Platform.NDS)) {
+            val lines = CheatCodes.freezeCode(p, 0x02000000, 4, 7)
+            assertEquals(lines, CheatCodes.parse(lines.joinToString("\n"), p))
+        }
+    }
 }
