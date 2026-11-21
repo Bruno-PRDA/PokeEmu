@@ -1,0 +1,308 @@
+package com.pokeemu.core
+
+import java.io.File
+import java.text.Normalizer
+import java.util.Properties
+import java.util.UUID
+
+/**
+ * A Pokémon in the global PC: its single-Pokémon file bytes (.pk3/.pk4) plus
+ * the names of its species, moves and item as its own game called them, so it
+ * can be matched up in another game whose ROM numbers them differently (hacks
+ * reorder species and add new ones).
+ */
+data class StoredMon(
+    val id: String,
+    /** File extension of [bytes]: "pk3" (GBA) or "pk4" (DS). */
+    val format: String,
+    val bytes: ByteArray,
+    val speciesName: String,
+    val nickname: String,
+    val level: Int?,
+    val shiny: Boolean,
+    val moveNames: List<String>,
+    val itemName: String?,
+    /** The game it was deposited from (display name) and that ROM's id. */
+    val fromGame: String,
+    val fromRomId: String,
+    val storedAt: Long,
+    /** The game file it first came from (see [OriginLedger]); null if not known. */
+    val originGame: String? = null,
+) {
+    override fun equals(other: Any?) = other is StoredMon && other.id == id
+    override fun hashCode() = id.hashCode()
+}
+
+/** The global PC: Pokémon stored outside any game, one pair of files each in [dir]. */
+class GlobalPc(private val dir: File) {
+    /** Where each Pokémon first came from; kept next to the PC. */
+    val origins = OriginLedger(File(dir, "origins.txt"))
+
+    fun list(): List<StoredMon> =
+        dir.listFiles { f -> f.extension == "properties" }.orEmpty().mapNotNull(::read).sortedBy { it.storedAt }
+
+    /** Stores [mon] from [editor]'s game. Returns the stored entry. */
+    fun deposit(editor: MonEditor, mon: Mon, gameName: String, romId: String): StoredMon {
+        requireCanDeposit(mon)
+        // A Pokémon from an older generation wasn't caught in this game: don't record it as its origin.
+        val arrivedFromOlder = when (editor.fileExtension) {
+            "pk4" -> mon.originVersion in GBA_VERSIONS
+            "pk5" -> mon.originVersion in GBA_VERSIONS || mon.originVersion in GEN4_VERSIONS
+            else -> false
+        }
+        val origin = if (arrivedFromOlder) origins.get(mon) else origins.record(mon, gameName)
+        val data = editor.data
+        val stored = StoredMon(
+            id = UUID.randomUUID().toString(),
+            format = editor.fileExtension,
+            bytes = editor.exportBytes(mon),
+            speciesName = data.speciesName(mon.species),
+            nickname = mon.nickname,
+            level = editor.level(mon),
+            shiny = mon.isShiny,
+            moveNames = mon.moves.filter { it != 0 }.map(data::moveName),
+            itemName = mon.heldItem.takeIf { it != 0 }?.let(data::itemName),
+            fromGame = gameName,
+            fromRomId = romId,
+            storedAt = System.currentTimeMillis(),
+            originGame = origin,
+        )
+        write(stored)
+        return stored
+    }
+
+    /** Damaged records (bad checksum, e.g. leftovers in a hack's unused box space) stay where they are. */
+    fun requireCanDeposit(mon: Mon) {
+        require(mon.checksumValid && mon.species != 0) { "This Pokémon's data is damaged, so it can't be moved" }
+    }
+
+    fun remove(stored: StoredMon) {
+        File(dir, "${stored.id}.bin").delete()
+        File(dir, "${stored.id}.properties").delete()
+        File(dir, "${stored.id}.png").delete() // its sprite, saved by the app
+    }
+
+    /** Where the app keeps a stored Pokémon's sprite (so it shows even if its game is removed). */
+    fun spriteFile(stored: StoredMon) = File(dir, "${stored.id}.png")
+
+    private companion object {
+        val GBA_VERSIONS = 1..5
+        val GEN4_VERSIONS = setOf(7, 8, 10, 11, 12)
+    }
+
+    private fun write(s: StoredMon) {
+        dir.mkdirs()
+        File(dir, "${s.id}.bin").writeBytes(s.bytes)
+        val p = Properties()
+        p["format"] = s.format
+        p["species"] = s.speciesName
+        p["nickname"] = s.nickname
+        s.level?.let { p["level"] = it.toString() }
+        p["shiny"] = s.shiny.toString()
+        p["moves"] = s.moveNames.joinToString("\n")
+        s.itemName?.let { p["item"] = it }
+        p["fromGame"] = s.fromGame
+        p["fromRomId"] = s.fromRomId
+        p["storedAt"] = s.storedAt.toString()
+        s.originGame?.let { p["originGame"] = it }
+        // Written last: an entry only exists once both files are complete.
+        val tmp = File(dir, "${s.id}.properties.tmp")
+        tmp.outputStream().use { p.store(it, null) }
+        check(tmp.renameTo(File(dir, "${s.id}.properties"))) { "Could not store the Pokémon" }
+    }
+
+    private fun read(meta: File): StoredMon? = runCatching {
+        val id = meta.nameWithoutExtension
+        val p = Properties().apply { meta.inputStream().use(::load) }
+        StoredMon(
+            id = id,
+            format = p.getProperty("format"),
+            bytes = File(dir, "$id.bin").readBytes(),
+            speciesName = p.getProperty("species", "?"),
+            nickname = p.getProperty("nickname", ""),
+            level = p.getProperty("level")?.toIntOrNull(),
+            shiny = p.getProperty("shiny") == "true",
+            moveNames = p.getProperty("moves", "").split('\n').filter { it.isNotEmpty() },
+            itemName = p.getProperty("item"),
+            fromGame = p.getProperty("fromGame", ""),
+            fromRomId = p.getProperty("fromRomId", ""),
+            storedAt = p.getProperty("storedAt")?.toLongOrNull() ?: meta.lastModified(),
+            originGame = p.getProperty("originGame"),
+        )
+    }.getOrNull()
+}
+
+/**
+ * Turns a stored Pokémon into one that fits the game [editor] is editing.
+ * In the same ROM nothing changes. In another ROM the species, moves and held
+ * item are looked up by name, since hacks number them differently.
+ */
+object Transfer {
+    /** A ready-to-insert Pokémon, plus notes on anything that had to change. */
+    class Result(val mon: Mon, val notes: List<String>)
+
+    /**
+     * Converts a single-Pokémon file to another format (e.g. "pk3" to "pk4").
+     * [finish] runs after species/moves/item are matched by name, for what
+     * depends on the target game (ability, gender...); it returns notes.
+     */
+    class Converter(val convert: (ByteArray) -> ByteArray, val finish: (Mon, MonEditor, StoredMon) -> List<String>)
+
+    /** Registered by the format modules (see Gen3To4); keyed by (from, to) extension. */
+    val converters = java.util.concurrent.ConcurrentHashMap<Pair<String, String>, Converter>()
+
+    /** Throws IllegalArgumentException (with a message for the user) if it can't go into this game. */
+    fun adapt(stored: StoredMon, editor: MonEditor, targetRomId: String): Result {
+        val converter = if (stored.format == editor.fileExtension) null else converters[stored.format to editor.fileExtension]
+        require(stored.format == editor.fileExtension || converter != null) {
+            "${stored.speciesName} is from a ${generationLabel(stored.format)} game and can't go back to a ${generationLabel(editor.fileExtension)} game"
+        }
+        val mon = editor.parseImport(converter?.convert?.invoke(stored.bytes) ?: stored.bytes)
+        if (converter == null && stored.fromRomId == targetRomId) {
+            requireSupported(mon, editor.data)
+            return Result(mon, emptyList())
+        }
+
+        val data = editor.data
+        val notes = mutableListOf<String>()
+
+        // Species: must exist in the target game under the same name. Hacks number species
+        // (and fakemon) their own way, so a number alone never says which Pokémon it is.
+        require(data.speciesNames.isNotEmpty()) {
+            "This game's Pokémon names couldn't be read from its ROM, so ${stored.speciesName} can't be checked and isn't moved in"
+        }
+        require(!isNumbered(stored.speciesName)) {
+            "${stored.speciesName}'s species is unknown (its game's names couldn't be read), so it can only go back to that game"
+        }
+        val species = requireNotNull(find(data.speciesNames, stored.speciesName)) { "${stored.speciesName} isn't in this game" }
+        if (species != mon.species) mon.species = species
+
+        // Moves: matched by name; ones this game doesn't have are dropped.
+        if (data.moveNames.isNotEmpty() && stored.moveNames.none(::isNumbered)) {
+            val ups = (0 until 4).filter { mon.move(it) != 0 }.map(mon::ppUps)
+            val kept = stored.moveNames.mapIndexedNotNull { i, name ->
+                val id = find(data.moveNames, name)
+                if (id == null) notes += "Forgot $name (not in this game)"
+                id?.let { it to ups.getOrElse(i) { 0 } }
+            }
+            require(kept.isNotEmpty()) { "None of ${stored.speciesName}'s moves exist in this game" }
+            for (i in 0 until 4) {
+                val (move, up) = kept.getOrNull(i) ?: (0 to 0)
+                mon.setPpUps(i, up)
+                editor.setMove(mon, i, move)
+            }
+        }
+
+        // Held item: matched by name, else removed.
+        val item = stored.itemName
+        if (item != null && data.itemNames.isNotEmpty() && !isNumbered(item)) {
+            val id = find(data.itemNames, item)
+            if (id == null) notes += "Left its $item behind (not in this game)"
+            mon.heldItem = id ?: 0
+        } else if (item != null && converter != null) {
+            // Another generation numbers items differently: without names, don't guess.
+            notes += "Left its $item behind (this game's item names weren't found)"
+            mon.heldItem = 0
+        }
+
+        if (converter != null) {
+            notes += converter.finish(mon, editor, stored)
+        } else {
+            // Ability: keep the same slot if the species has it, else its first ability.
+            val options = runCatching { editor.abilityOptions(mon) }.getOrDefault(emptyList())
+            if (options.isNotEmpty() && editor.abilityIndex(mon) < 0) editor.setAbility(mon, 0)
+        }
+        requireSupported(mon, data)
+        return Result(mon, notes)
+    }
+
+    /**
+     * Throws (with a message for the user) unless [data]'s game can hold [mon]: its
+     * species must be a real entry of that ROM (not a blank or "-----" slot) with base
+     * data when the ROM has any, and its moves and item must exist there. Guards every
+     * way a Pokémon gets into a game (transfers, imported files).
+     */
+    fun requireSupported(mon: Mon, data: GameData) {
+        val names = data.speciesNames
+        require(names.isNotEmpty()) { "This game's Pokémon names couldn't be read from its ROM, so nothing can be checked or moved in" }
+        require(isRealSpecies(data, mon.species)) { "Species #${mon.species} doesn't exist in this game" }
+        if (data.moveNames.isNotEmpty()) mon.moves.firstOrNull { it >= data.moveNames.size }?.let {
+            throw IllegalArgumentException("${data.speciesName(mon.species)} knows a move this game doesn't have (#$it)")
+        }
+        if (data.itemNames.isNotEmpty()) require(mon.heldItem < data.itemNames.size) {
+            "${data.speciesName(mon.species)} holds an item this game doesn't have (#${mon.heldItem})"
+        }
+    }
+
+    /**
+     * A species this game really has: a named entry (not blank, "-----" or "?????"),
+     * with base data when the ROM has base data at all (hacks leave named but empty slots).
+     */
+    fun isRealSpecies(data: GameData, species: Int): Boolean {
+        val names = data.speciesNames
+        if (species !in 1 until names.size || normalize(names[species]).isEmpty()) return false
+        return !hasBaseStats(data) || data.base(species) != null
+    }
+
+    private fun hasBaseStats(data: GameData) = (1 until minOf(data.speciesNames.size, 30)).any { data.base(it) != null }
+
+    /** "GBA", "Gen 4 DS", "Gen 5 DS" for a record format. */
+    /** Whether a stored Pokémon can go into a game, and what it would lose (see [fit]). */
+    data class Fit(val ok: Boolean, val message: String)
+
+    /**
+     * Whether [stored] can be moved into a game whose Pokémon are [targetFormat]
+     * files and whose ROM data is [data] (the same checks [adapt] makes, without
+     * a save): the reason if not, else what it would leave behind.
+     */
+    /** True if a [from] Pokémon can be moved into a [to] game at all (same generation, or a newer one). */
+    fun canGo(from: String, to: String) = from == to || converters[from to to] != null
+
+    fun fit(stored: StoredMon, targetFormat: String, targetRomId: String, data: GameData?): Fit {
+        if (!canGo(stored.format, targetFormat)) {
+            return Fit(false, "A ${generationLabel(stored.format)} Pokémon can't go back to a ${generationLabel(targetFormat)} game")
+        }
+        if (stored.format == targetFormat && stored.fromRomId == targetRomId) return Fit(true, "Its own game")
+        if (data == null || data.speciesNames.isEmpty()) return Fit(false, "This game's Pokémon names couldn't be read")
+        if (isNumbered(stored.speciesName)) return Fit(false, "Its species is unknown, so it can only go back to its own game")
+        val species = find(data.speciesNames, stored.speciesName)
+        if (species == null || !isRealSpecies(data, species)) return Fit(false, "${stored.speciesName} isn't in this game")
+        val notes = mutableListOf<String>()
+        when {
+            stored.format == "pk3" && targetFormat == "pk4" -> notes += "through Pal Park"
+            stored.format != "pk5" && targetFormat == "pk5" -> notes += "through Poké Transfer"
+        }
+        if (data.moveNames.isNotEmpty() && stored.moveNames.none(::isNumbered)) {
+            val (known, lost) = stored.moveNames.partition { find(data.moveNames, it) != null }
+            if (known.isEmpty()) return Fit(false, "None of its moves exist in this game")
+            if (lost.isNotEmpty()) notes += "forgets ${lost.joinToString()}"
+        }
+        stored.itemName?.let { item ->
+            if (data.itemNames.isEmpty() || isNumbered(item) || find(data.itemNames, item) == null) notes += "leaves its $item behind"
+        }
+        return Fit(true, notes.joinToString(" · ").replaceFirstChar { it.uppercase() }.ifEmpty { "Fits as it is" })
+    }
+
+    fun generationLabel(format: String) = when (format) {
+        "pk3" -> "GBA"
+        "pk4" -> "Gen 4 DS"
+        "pk5" -> "Black/White"
+        else -> format
+    }
+
+    /** Index of [name] in [names], ignoring case, accents and punctuation; first match wins. */
+    fun find(names: List<String>, name: String): Int? {
+        val key = normalize(name)
+        if (key.isEmpty()) return null
+        return names.indices.firstOrNull { it != 0 && normalize(names[it]) == key }
+    }
+
+    /** "#123" / "Move #5": a placeholder for a name the source ROM didn't have. */
+    private fun isNumbered(name: String) = Regex("""(^|\s)#\d+$""").containsMatchIn(name)
+
+    fun normalize(s: String) = Normalizer.normalize(s, Normalizer.Form.NFD)
+        .replace(Regex("\\p{M}"), "")
+        .lowercase()
+        .replace('♀', 'f').replace('♂', 'm')
+        .filter { it.isLetterOrDigit() }
+}

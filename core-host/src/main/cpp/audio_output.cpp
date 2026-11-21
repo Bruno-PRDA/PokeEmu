@@ -121,10 +121,12 @@ aaudio_data_callback_result_t AudioOutput::dataCallback(AAudioStream*, void* use
     auto* out = static_cast<int16_t*>(audioData);
     size_t r = self->readPos_.load(std::memory_order_relaxed);
     size_t w = self->writePos_.load(std::memory_order_acquire);
+    const float gain = self->gain_.load(std::memory_order_relaxed);
     int32_t i = 0;
     for (; i < numFrames && r != w; ++i) {
-        out[i * 2] = self->ring_[r * 2];
-        out[i * 2 + 1] = self->ring_[r * 2 + 1];
+        // Scaling down only: never clips.
+        out[i * 2] = static_cast<int16_t>(self->ring_[r * 2] * gain);
+        out[i * 2 + 1] = static_cast<int16_t>(self->ring_[r * 2 + 1] * gain);
         r = (r + 1) % self->capacityFrames_;
     }
     self->readPos_.store(r, std::memory_order_release);

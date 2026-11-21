@@ -15,6 +15,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
@@ -59,6 +62,41 @@ object PadLayouts {
         ),
     )
 
+    private fun dsControls(
+        a: Pair<Float, Float>, b: Pair<Float, Float>, x: Pair<Float, Float>, y: Pair<Float, Float>,
+        l: Pair<Float, Float>, r: Pair<Float, Float>,
+        select: Pair<Float, Float>, start: Pair<Float, Float>,
+    ) = listOf(
+        PadControl("A", Button.A.mask, a.first, a.second, 30.dp),
+        PadControl("B", Button.B.mask, b.first, b.second, 30.dp),
+        PadControl("X", Button.X.mask, x.first, x.second, 30.dp),
+        PadControl("Y", Button.Y.mask, y.first, y.second, 30.dp),
+        PadControl("L", Button.L.mask, l.first, l.second, 26.dp, pill = true),
+        PadControl("R", Button.R.mask, r.first, r.second, 26.dp, pill = true),
+        PadControl("SELECT", Button.SELECT.mask, select.first, select.second, 20.dp, pill = true),
+        PadControl("START", Button.START.mask, start.first, start.second, 20.dp, pill = true),
+    )
+
+    /** DS: A/B/X/Y diamond, below the (tall) screens. */
+    val dsPortrait = PadLayout(
+        dpadX = 0.22f, dpadY = 0.52f, dpadRadius = 64.dp,
+        controls = dsControls(
+            a = 0.90f to 0.52f, b = 0.76f to 0.74f, x = 0.76f to 0.30f, y = 0.62f to 0.52f,
+            l = 0.13f to 0.08f, r = 0.87f to 0.08f,
+            select = 0.40f to 0.93f, start = 0.60f to 0.93f,
+        ),
+    )
+
+    /** DS landscape: screens in the middle, controls on both sides. */
+    val dsLandscape = PadLayout(
+        dpadX = 0.11f, dpadY = 0.62f, dpadRadius = 64.dp,
+        controls = dsControls(
+            a = 0.95f to 0.58f, b = 0.88f to 0.74f, x = 0.88f to 0.42f, y = 0.81f to 0.58f,
+            l = 0.07f to 0.14f, r = 0.93f to 0.14f,
+            select = 0.08f to 0.92f, start = 0.92f to 0.92f,
+        ),
+    )
+
     /** Controls overlaid on the full screen, beside the game. */
     val landscape = PadLayout(
         dpadX = 0.11f, dpadY = 0.62f, dpadRadius = 68.dp,
@@ -75,10 +113,19 @@ object PadLayouts {
  * sliding a thumb from B to A (or around the d-pad) works naturally.
  */
 @Composable
-fun Gamepad(layout: PadLayout, opacity: Float, onButtons: (Int) -> Unit, modifier: Modifier = Modifier) {
+fun Gamepad(
+    layout: PadLayout,
+    opacity: Float,
+    onButtons: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+    /** Layout editing: controls are dragged instead of pressed; [onMove] gets the new position (fractions). */
+    editing: Boolean = false,
+    onMove: (id: String, x: Float, y: Float) -> Unit = { _, _, _ -> },
+) {
     val haptics = LocalHapticFeedback.current
     val textMeasurer = rememberTextMeasurer()
     val currentOnButtons by rememberUpdatedState(onButtons)
+    val currentOnMove by rememberUpdatedState(onMove)
     var pressed by remember { mutableIntStateOf(0) }
 
     BoxWithConstraints(modifier.fillMaxSize()) {
@@ -90,6 +137,15 @@ fun Gamepad(layout: PadLayout, opacity: Float, onButtons: (Int) -> Unit, modifie
         val shapes = layout.controls.map { c ->
             Triple(c, Offset(c.x * w, c.y * h), with(density) { c.radius.toPx() })
         }
+
+        /** The control under [p] for dragging: a label, or [PadCustom.DPAD], with its centre. */
+        fun grabAt(p: Offset): Pair<String, Offset>? {
+            if ((p - dpadCenter).getDistance() <= dpadR * 1.25f) return PadCustom.DPAD to dpadCenter
+            return shapes.minByOrNull { (_, center, _) -> (p - center).getDistance() }
+                ?.takeIf { (c, center, r) -> (p - center).getDistance() <= r * (if (c.pill) 2.2f else 1.6f) }
+                ?.let { (c, center, _) -> c.label to center }
+        }
+        val currentGrabAt by rememberUpdatedState(::grabAt)
 
         fun hitTest(p: Offset): Int {
             val d = p - dpadCenter
@@ -117,7 +173,25 @@ fun Gamepad(layout: PadLayout, opacity: Float, onButtons: (Int) -> Unit, modifie
         Canvas(
             Modifier
                 .fillMaxSize()
-                .pointerInput(layout, w, h) {
+                // While playing, restart with every layout change so presses use the new positions.
+                .pointerInput(editing, w, h, if (editing) null else layout) {
+                    if (editing) {
+                        // Positions change while dragging, so this block must not restart; it reads them through currentGrabAt.
+                        awaitEachGesture {
+                            val down = awaitFirstDown()
+                            val (id, center) = currentGrabAt(down.position) ?: return@awaitEachGesture
+                            val grab = center - down.position
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            while (true) {
+                                val change = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
+                                if (!change.pressed) break
+                                val at = change.position + grab
+                                currentOnMove(id, at.x / w, at.y / h)
+                                change.consume()
+                            }
+                        }
+                        return@pointerInput
+                    }
                     awaitPointerEventScope {
                         while (true) {
                             val event = awaitPointerEvent()
@@ -135,8 +209,21 @@ fun Gamepad(layout: PadLayout, opacity: Float, onButtons: (Int) -> Unit, modifie
                     }
                 },
         ) {
-            val base = Color.White.copy(alpha = 0.22f * opacity)
+            val base = Color.White.copy(alpha = (if (editing) 0.32f else 0.22f) * opacity)
             val active = Color.White.copy(alpha = 0.55f * opacity)
+            if (editing) {
+                // Outline every movable control.
+                val outline = Color(0xFF90CAF9)
+                drawCircle(outline, dpadR * 1.1f, dpadCenter, style = Stroke(2.dp.toPx()))
+                for ((c, center, r) in shapes) {
+                    if (c.pill) {
+                        val size = Size(r * 3.6f, r * 1.8f)
+                        drawRoundRect(outline, center - Offset(size.width / 2, size.height / 2), size, CornerRadius(size.height / 2), style = Stroke(2.dp.toPx()))
+                    } else {
+                        drawCircle(outline, r * 1.15f, center, style = Stroke(2.dp.toPx()))
+                    }
+                }
+            }
             val labelStyle = TextStyle(color = Color.White.copy(alpha = 0.8f * opacity), fontSize = 14.sp)
 
             drawDpad(dpadCenter, dpadR, pressed, base, active)

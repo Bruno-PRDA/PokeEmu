@@ -26,13 +26,14 @@ android {
     kotlinOptions { jvmTarget = "17" }
 }
 
-// Builds mGBA's libretro core (third_party/mgba) into src/main/jniLibs if it is missing.
+// Builds the libretro cores (mGBA, melonDS DS) into src/main/jniLibs if they are missing.
 val buildMgbaCore by tasks.registering(Exec::class) {
     val script = rootProject.file("scripts/build-core.ps1")
     inputs.file(script)
     outputs.files(
-        file("src/main/jniLibs/arm64-v8a/libmgba_libretro.so"),
-        file("src/main/jniLibs/x86_64/libmgba_libretro.so"),
+        listOf("arm64-v8a", "x86_64").flatMap { abi ->
+            listOf("libmgba_libretro.so", "libmelondsds_libretro.so").map { file("src/main/jniLibs/$abi/$it") }
+        },
     )
     commandLine("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script.absolutePath)
 }

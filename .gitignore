@@ -7,3 +7,12 @@ local.properties
 .externalNativeBuild/
 /core-host/src/main/jniLibs/
 /build-core/
+
+# ROMs and saves are never committed
+/roms/
+*.nds
+*.sav
+/dist/
+
+# Built APKs
+/release/

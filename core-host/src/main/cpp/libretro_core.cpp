@@ -1,5 +1,16 @@
 #include "libretro_core.h"
 
+#include <atomic>
+#include <map>
+#include <mutex>
+
+namespace {
+// Core options set by the app; values must stay alive while the core reads them.
+std::mutex gVariablesMutex;
+std::map<std::string, std::string> gVariables;
+std::atomic<bool> gVariablesDirty{false};
+}  // namespace
+
 #include <android/log.h>
 #include <dlfcn.h>
 
@@ -47,6 +58,9 @@ bool LibretroCore::open(const std::string& libraryName, const std::string& syste
               sym(retro_unserialize_, "retro_unserialize") &&
               sym(retro_get_memory_data_, "retro_get_memory_data") &&
               sym(retro_get_memory_size_, "retro_get_memory_size");
+    // Optional: not every core supports cheats.
+    retro_cheat_reset_ = reinterpret_cast<decltype(retro_cheat_reset_)>(dlsym(handle_, "retro_cheat_reset"));
+    retro_cheat_set_ = reinterpret_cast<decltype(retro_cheat_set_)>(dlsym(handle_, "retro_cheat_set"));
     if (!ok) {
         dlclose(handle_);
         handle_ = nullptr;
@@ -80,12 +94,12 @@ bool LibretroCore::open(const std::string& libraryName, const std::string& syste
     return true;
 }
 
-bool LibretroCore::loadGame(const std::vector<uint8_t>& rom) {
+bool LibretroCore::loadGame(const void* data, size_t size, const std::string& path) {
     if (!initialized_ || gameLoaded_) return false;
     retro_game_info game{};
-    game.path = nullptr;
-    game.data = rom.data();
-    game.size = rom.size();
+    game.path = path.empty() ? nullptr : path.c_str();
+    game.data = data;
+    game.size = size;
     if (!retro_load_game_(&game)) {
         LOGE("retro_load_game failed");
         return false;
@@ -104,6 +118,13 @@ void LibretroCore::runFrame() {
 
 void LibretroCore::reset() {
     if (gameLoaded_) retro_reset_();
+}
+
+bool LibretroCore::setCheats(const std::vector<std::string>& codes) {
+    if (!gameLoaded_ || !retro_cheat_reset_ || !retro_cheat_set_) return false;
+    retro_cheat_reset_();
+    for (unsigned i = 0; i < codes.size(); ++i) retro_cheat_set_(i, true, codes[i].c_str());
+    return true;
 }
 
 void LibretroCore::close() {
@@ -146,7 +167,28 @@ uint8_t* LibretroCore::memoryData(unsigned region, size_t* size) {
     return static_cast<uint8_t*>(retro_get_memory_data_(region));
 }
 
+uint8_t* LibretroCore::busAddress(uint32_t address, size_t* available) {
+    *available = 0;
+    if (!gameLoaded_) return nullptr;
+    for (const auto& r : memoryMap_) {
+        if (address >= r.start && address - r.start < r.len) {
+            const size_t rel = address - r.start;
+            *available = r.len - rel;
+            return r.ptr + r.offset + rel;
+        }
+    }
+    return nullptr;
+}
+
 // ---- static callbacks -------------------------------------------------------
+
+void LibretroCore::setVariable(const std::string& key, const std::string& value) {
+    std::lock_guard<std::mutex> lock(gVariablesMutex);
+    auto it = gVariables.find(key);
+    if (it != gVariables.end() && it->second == value) return;
+    gVariables[key] = value;
+    gVariablesDirty.store(true);
+}
 
 bool LibretroCore::environment(unsigned cmd, void* data) {
     LibretroCore* self = active_;
@@ -173,16 +215,39 @@ bool LibretroCore::environment(unsigned cmd, void* data) {
         case RETRO_ENVIRONMENT_GET_LOG_INTERFACE:
             static_cast<retro_log_callback*>(data)->log = &LibretroCore::log;
             return true;
+        case RETRO_ENVIRONMENT_GET_VARIABLE: {
+            auto* var = static_cast<retro_variable*>(data);
+            if (!var || !var->key) return false;
+            std::lock_guard<std::mutex> lock(gVariablesMutex);
+            auto it = gVariables.find(var->key);
+            if (it == gVariables.end()) return false;  // core uses its default
+            var->value = it->second.c_str();
+            return true;
+        }
         case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE:
-            *static_cast<bool*>(data) = false;
+            *static_cast<bool*>(data) = gVariablesDirty.exchange(false);
             return true;
         case RETRO_ENVIRONMENT_GET_INPUT_BITMASKS:
             return true;
-        case RETRO_ENVIRONMENT_SET_MEMORY_MAPS:
+        case RETRO_ENVIRONMENT_SET_MEMORY_MAPS: {
+            const auto* map = static_cast<const retro_memory_map*>(data);
+            self->memoryMap_.clear();
+            for (unsigned i = 0; i < map->num_descriptors; ++i) {
+                const retro_memory_descriptor& d = map->descriptors[i];
+                if (!d.ptr || d.len == 0) continue;
+                self->memoryMap_.push_back({static_cast<uint8_t*>(d.ptr), d.offset, static_cast<uint32_t>(d.start), d.len});
+            }
+            return true;
+        }
+        case RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO:
+            self->avInfo_ = *static_cast<const retro_system_av_info*>(data);
+            return true;
+        case RETRO_ENVIRONMENT_SET_GEOMETRY:
+            self->avInfo_.geometry = *static_cast<const retro_game_geometry*>(data);
+            return true;
         case RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS:
         case RETRO_ENVIRONMENT_SET_CONTROLLER_INFO:
         case RETRO_ENVIRONMENT_SET_SUPPORT_ACHIEVEMENTS:
-        case RETRO_ENVIRONMENT_SET_GEOMETRY:
             return true;
         default:
             // Unknown/unsupported commands: core falls back to its defaults
@@ -216,13 +281,10 @@ int16_t LibretroCore::inputState(unsigned port, unsigned device, unsigned index,
 }
 
 void LibretroCore::log(retro_log_level level, const char* fmt, ...) {
-    int prio = ANDROID_LOG_DEBUG;
-    switch (level) {
-        case RETRO_LOG_INFO: prio = ANDROID_LOG_INFO; break;
-        case RETRO_LOG_WARN: prio = ANDROID_LOG_WARN; break;
-        case RETRO_LOG_ERROR: prio = ANDROID_LOG_ERROR; break;
-        default: break;
-    }
+    // Cores log a lot at info/debug level (mGBA logs every DMA transfer), and
+    // writing that to logcat costs real emulation speed. Keep warnings/errors only.
+    if (level < RETRO_LOG_WARN) return;
+    const int prio = level == RETRO_LOG_ERROR ? ANDROID_LOG_ERROR : ANDROID_LOG_WARN;
     va_list args;
     va_start(args, fmt);
     __android_log_vprint(prio, "core", fmt, args);

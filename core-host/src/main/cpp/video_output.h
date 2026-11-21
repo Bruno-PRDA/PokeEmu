@@ -1,5 +1,7 @@
 #pragma once
 
+#include <EGL/egl.h>
+#include <GLES2/gl2.h>
 #include <android/native_window.h>
 
 #include <cstdint>
@@ -8,9 +10,16 @@
 
 #include "libretro.h"
 
-// Keeps the latest frame as RGBA8888 and presents it to an ANativeWindow,
-// upscaled by the largest integer factor that fits (nearest neighbour) so
-// pixels stay sharp; the compositor handles the small remainder.
+// Keeps the latest frame as RGBA8888 and draws it to an ANativeWindow with
+// OpenGL ES 2 (nearest-neighbour scaling, letterboxed to the frame's aspect).
+//
+// GL instead of ANativeWindow_lock: CPU-locking the window leaks one GPU fence
+// per frame on some Android versions (the process dies with "Too many open
+// files" after ~15 minutes). EGL manages buffers and fences itself.
+//
+// All EGL work happens under mutex_, and the context is released after each
+// frame, so the window can be replaced or destroyed from the UI thread at any
+// time (including while emulation is paused).
 class VideoOutput {
 public:
     ~VideoOutput();
@@ -24,10 +33,25 @@ public:
     bool snapshotArgb(std::vector<uint32_t>& out, unsigned& width, unsigned& height);
 
 private:
+    bool ensureContext();        // display + config + context + program (once)
+    bool ensureSurface();        // EGL surface for window_ (after a window change)
+    void destroySurface();
+    void destroyAll();
+
     std::mutex mutex_;
     ANativeWindow* window_ = nullptr;
-    int windowW_ = 0, windowH_ = 0;
-    int bufferScale_ = 0;
+    bool surfaceDirty_ = false;  // window_ changed since the EGL surface was made
+
+    EGLDisplay display_ = EGL_NO_DISPLAY;
+    EGLConfig config_ = nullptr;
+    EGLContext context_ = EGL_NO_CONTEXT;
+    EGLSurface surface_ = EGL_NO_SURFACE;
+    GLuint program_ = 0;
+    GLuint texture_ = 0;
+    GLint attrPos_ = -1, attrUv_ = -1;
+    unsigned texW_ = 0, texH_ = 0;
+
     unsigned frameW_ = 0, frameH_ = 0;
-    std::vector<uint32_t> frame_;  // ABGR in memory order R,G,B,A (RGBA_8888)
+    bool frameDirty_ = false;
+    std::vector<uint32_t> frame_;  // memory order R,G,B,A
 };

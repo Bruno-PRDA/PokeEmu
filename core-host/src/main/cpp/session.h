@@ -18,8 +18,11 @@ public:
     static Session* create(const std::string& coreLibrary, const std::string& systemDir, const std::string& saveDir);
     ~Session();
 
-    // Loads the ROM; if savePath exists its contents are copied into the core's save RAM.
-    bool loadGame(const std::vector<uint8_t>& rom, const std::string& savePath);
+    // Memory-maps the ROM file (large DS ROMs never pass through the Java heap) and
+    // loads it; if savePath exists its contents are copied into the core's save RAM.
+    // [patches]: (offset, bytes) written into the in-memory copy of the ROM only (the file is untouched).
+    bool loadGame(const std::string& romPath, const std::string& savePath,
+                  const std::vector<std::pair<size_t, std::vector<uint8_t>>>& patches = {});
     void start();
     void pause();
     void resume();
@@ -27,8 +30,16 @@ public:
 
     void setWindow(ANativeWindow* window) { video_.setWindow(window); }
     void setButtons(uint32_t mask) { buttons_.store(mask); }
+    // Touchscreen: libretro pointer coordinates (-0x7FFF..0x7FFF over the whole frame).
+    void setPointer(int x, int y, bool pressed) {
+        pointerX_.store(x);
+        pointerY_.store(y);
+        pointerPressed_.store(pressed);
+    }
     void setSpeed(int multiplier) { speed_.store(multiplier < 1 ? 1 : multiplier); }
+    void setVolume(float volume) { audio_.setGain(volume); }
     void reset();
+    bool setCheats(const std::vector<std::string>& codes);
 
     std::vector<uint8_t> saveState();
     bool loadState(const std::vector<uint8_t>& state);
@@ -36,6 +47,10 @@ public:
     // Writes save RAM to disk if it changed since the last flush. Returns false on I/O error.
     bool flushSaveRam(bool force = false);
     std::vector<uint8_t> readMemory(unsigned region, size_t offset, size_t length);
+    // Reads console memory by bus address (e.g. 0x02000000 = GBA EWRAM).
+    std::vector<uint8_t> readBus(uint32_t address, size_t length);
+    // Writes game memory (RAM only: what the core exposes on its bus), between frames.
+    bool writeBus(uint32_t address, const std::vector<uint8_t>& data);
     double fps() const { return core_.avInfo().timing.fps; }
 
 private:
@@ -59,9 +74,13 @@ private:
     bool paused_ = false;
 
     std::atomic<uint32_t> buttons_{0};
+    std::atomic<int> pointerX_{0}, pointerY_{0};
+    std::atomic<bool> pointerPressed_{false};
     std::atomic<int> speed_{1};
     bool audioMuted_ = false;  // true while fast-forwarding
 
+    void* romMap_ = nullptr;  // mmap of the ROM file, kept until the core is closed
+    size_t romMapSize_ = 0;
     std::mutex saveMutex_;  // guards savePath_/lastSavedRam_ and the save file
     std::string savePath_;
     std::vector<uint8_t> lastSavedRam_;

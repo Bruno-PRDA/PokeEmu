@@ -41,9 +41,24 @@ JNI_FN(jboolean, nativeCreate)(JNIEnv* env, jobject, jstring coreLib, jstring sy
     return gSession ? JNI_TRUE : JNI_FALSE;
 }
 
-JNI_FN(jboolean, nativeLoadGame)(JNIEnv* env, jobject, jbyteArray rom, jstring savePath) {
+JNI_FN(jboolean, nativeLoadGame)(JNIEnv* env, jobject, jstring romPath, jstring savePath,
+                                 jlongArray patchOffsets, jobjectArray patchBytes) {
     if (!gSession) return JNI_FALSE;
-    return gSession->loadGame(toBytes(env, rom), toString(env, savePath)) ? JNI_TRUE : JNI_FALSE;
+    std::vector<std::pair<size_t, std::vector<uint8_t>>> patches;
+    jsize n = patchOffsets ? env->GetArrayLength(patchOffsets) : 0;
+    if (n > 0) {
+        std::vector<jlong> offsets(n);
+        env->GetLongArrayRegion(patchOffsets, 0, n, offsets.data());
+        for (jsize i = 0; i < n; ++i) {
+            auto bytes = static_cast<jbyteArray>(env->GetObjectArrayElement(patchBytes, i));
+            jsize len = env->GetArrayLength(bytes);
+            std::vector<uint8_t> data(len);
+            env->GetByteArrayRegion(bytes, 0, len, reinterpret_cast<jbyte*>(data.data()));
+            env->DeleteLocalRef(bytes);
+            patches.emplace_back(static_cast<size_t>(offsets[i]), std::move(data));
+        }
+    }
+    return gSession->loadGame(toString(env, romPath), toString(env, savePath), patches) ? JNI_TRUE : JNI_FALSE;
 }
 
 JNI_FN(void, nativeStart)(JNIEnv*, jobject) {
@@ -72,12 +87,42 @@ JNI_FN(void, nativeSetButtons)(JNIEnv*, jobject, jint mask) {
     if (gSession) gSession->setButtons(static_cast<uint32_t>(mask));
 }
 
+JNI_FN(void, nativeSetPointer)(JNIEnv*, jobject, jint x, jint y, jboolean pressed) {
+    if (gSession) gSession->setPointer(x, y, pressed == JNI_TRUE);
+}
+
+JNI_FN(void, nativeSetVariable)(JNIEnv* env, jobject, jstring key, jstring value) {
+    const char* k = env->GetStringUTFChars(key, nullptr);
+    const char* v = env->GetStringUTFChars(value, nullptr);
+    LibretroCore::setVariable(k, v);
+    env->ReleaseStringUTFChars(key, k);
+    env->ReleaseStringUTFChars(value, v);
+}
+
+JNI_FN(void, nativeSetVolume)(JNIEnv*, jobject, jfloat volume) {
+    if (gSession) gSession->setVolume(volume);
+}
+
 JNI_FN(void, nativeSetSpeed)(JNIEnv*, jobject, jint multiplier) {
     if (gSession) gSession->setSpeed(multiplier);
 }
 
 JNI_FN(void, nativeReset)(JNIEnv*, jobject) {
     if (gSession) gSession->reset();
+}
+
+JNI_FN(jboolean, nativeSetCheats)(JNIEnv* env, jobject, jobjectArray codes) {
+    if (!gSession) return JNI_FALSE;
+    std::vector<std::string> list;
+    jsize n = env->GetArrayLength(codes);
+    for (jsize i = 0; i < n; ++i) {
+        auto js = static_cast<jstring>(env->GetObjectArrayElement(codes, i));
+        const char* c = env->GetStringUTFChars(js, nullptr);
+        list.emplace_back(c);
+        env->ReleaseStringUTFChars(js, c);
+        env->DeleteLocalRef(js);
+    }
+    return gSession->setCheats(list) ? JNI_TRUE : JNI_FALSE;
 }
 
 JNI_FN(jbyteArray, nativeSaveState)(JNIEnv* env, jobject) {
@@ -113,6 +158,20 @@ JNI_FN(jbyteArray, nativeReadMemory)(JNIEnv* env, jobject, jint region, jlong of
     auto bytes = gSession->readMemory(static_cast<unsigned>(region), static_cast<size_t>(offset),
                                       static_cast<size_t>(length));
     return bytes.empty() ? nullptr : toJava(env, bytes);
+}
+
+JNI_FN(jbyteArray, nativeReadBus)(JNIEnv* env, jobject, jlong address, jint length) {
+    if (!gSession || address < 0 || length <= 0) return nullptr;
+    auto bytes = gSession->readBus(static_cast<uint32_t>(address), static_cast<size_t>(length));
+    return bytes.empty() ? nullptr : toJava(env, bytes);
+}
+
+JNI_FN(jboolean, nativeWriteBus)(JNIEnv* env, jobject, jlong address, jbyteArray data) {
+    if (!gSession || address < 0 || !data) return JNI_FALSE;
+    jsize len = env->GetArrayLength(data);
+    std::vector<uint8_t> bytes(len);
+    env->GetByteArrayRegion(data, 0, len, reinterpret_cast<jbyte*>(bytes.data()));
+    return gSession->writeBus(static_cast<uint32_t>(address), bytes) ? JNI_TRUE : JNI_FALSE;
 }
 
 JNI_FN(jdouble, nativeFps)(JNIEnv*, jobject) { return gSession ? gSession->fps() : 0.0; }

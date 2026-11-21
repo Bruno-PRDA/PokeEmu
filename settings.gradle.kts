@@ -13,4 +13,4 @@ dependencyResolutionManagement {
     }
 }
 rootProject.name = "PokeEmu"
-include(":app", ":core-host", ":saves")
+include(":app", ":core-host", ":saves", ":pokemon-core", ":pokemon-gen3", ":pokemon-gen4", ":pokemon-gen5")

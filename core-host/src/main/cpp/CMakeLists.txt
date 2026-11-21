@@ -12,4 +12,4 @@ add_library(corehost SHARED
     video_output.cpp
 )
 target_compile_options(corehost PRIVATE -Wall -Wextra -Wno-unused-parameter)
-target_link_libraries(corehost android log aaudio dl)
+target_link_libraries(corehost android log aaudio dl EGL GLESv2)

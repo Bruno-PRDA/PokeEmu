@@ -1,5 +1,16 @@
 package com.pokeemu.app.ui
 
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.automirrored.filled.ExitToApp
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Gamepad
+import androidx.compose.material.icons.filled.EmojiEvents
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.Restore
+import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.PlayArrow
 import android.content.res.Configuration
 import android.graphics.BitmapFactory
 import android.view.SurfaceHolder
@@ -11,11 +22,26 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.getValue
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.material3.Slider
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.border
+import androidx.compose.ui.unit.Dp
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -23,6 +49,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
+import androidx.compose.material.icons.filled.TouchApp
+import androidx.compose.material.icons.filled.QueryStats
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
@@ -49,19 +80,52 @@ import java.io.File
 import java.text.DateFormat
 import java.util.Date
 
-/** Surface the native side draws into. */
+/**
+ * Surface the native side draws into. [onTouch] (DS touchscreen) receives
+ * touches as fractions of the surface, which matches the video frame.
+ */
+/** The surface the native side currently draws into (one game screen at a time). */
+@Volatile private var currentSurface: android.view.Surface? = null
+
+@android.annotation.SuppressLint("ClickableViewAccessibility")
 @Composable
-fun GameSurface(onSurface: (android.view.Surface?) -> Unit, modifier: Modifier = Modifier) {
+fun GameSurface(
+    onSurface: (android.view.Surface?) -> Unit,
+    aspect: Float,
+    /** The area to fit into; the surface is the largest [aspect] rectangle inside it, centred. */
+    modifier: Modifier = Modifier,
+    onTouch: ((Float, Float, Boolean) -> Unit)? = null,
+) = BoxWithConstraints(modifier, contentAlignment = Alignment.Center) {
+    val width = when {
+        maxWidth == Dp.Infinity -> maxHeight * aspect
+        maxHeight == Dp.Infinity -> maxWidth
+        else -> minOf(maxWidth, maxHeight * aspect)
+    }
     AndroidView(
-        modifier = modifier.aspectRatio(3f / 2f),
+        modifier = Modifier.size(width, width / aspect),
         factory = { ctx ->
             SurfaceView(ctx).apply {
+                if (onTouch != null) setOnTouchListener { v, e ->
+                    val pressed = e.actionMasked != android.view.MotionEvent.ACTION_UP &&
+                        e.actionMasked != android.view.MotionEvent.ACTION_CANCEL
+                    onTouch(e.x / v.width, e.y / v.height, pressed)
+                    true
+                }
                 holder.addCallback(object : SurfaceHolder.Callback {
                     override fun surfaceCreated(holder: SurfaceHolder) {}
-                    override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) =
+                    override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
+                        currentSurface = holder.surface
                         onSurface(holder.surface)
+                    }
 
-                    override fun surfaceDestroyed(holder: SurfaceHolder) = onSurface(null)
+                    // When the layout changes, a new SurfaceView can be ready before the old one
+                    // is destroyed; only detach if the destroyed surface is still the one in use.
+                    override fun surfaceDestroyed(holder: SurfaceHolder) {
+                        if (currentSurface === holder.surface) {
+                            currentSurface = null
+                            onSurface(null)
+                        }
+                    }
                 })
             }
         },
@@ -75,31 +139,136 @@ fun PlayerScreen(
     fastForward: Boolean,
     onToggleFastForward: () -> Unit,
     onOpenMenu: () -> Unit,
+    overlayOpen: Boolean,
+    onToggleOverlay: (() -> Unit)?,
+    overlay: @Composable (Modifier) -> Unit,
+    aspect: Float = 3f / 2f,
+    portraitPad: PadLayout = PadLayouts.portrait,
+    landscapePad: PadLayout = PadLayouts.landscape,
+    onTouch: ((Float, Float, Boolean) -> Unit)? = null,
+    /** The user's control layouts (see [PadCustom]). */
+    portraitCustom: PadCustom = PadCustom(),
+    landscapeCustom: PadCustom = PadCustom(),
+    /** Layout editing: controls and the screen are dragged; the game is paused meanwhile. */
+    editing: Boolean = false,
+    onCustom: (landscape: Boolean, PadCustom) -> Unit = { _, _ -> },
+    onEditDone: () -> Unit = {},
+    /** "Top + buttons" layout: shows the touch screen in the top screen's place, or back. Null hides the button. */
+    onPeekTouch: (() -> Unit)? = null,
+    peekingTouch: Boolean = false,
 ) {
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val toolButtons = @Composable {
         IconButton(onClick = onToggleFastForward, colors = IconButtonDefaults.iconButtonColors(
             contentColor = if (fastForward) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.6f),
         )) { Icon(Icons.Default.FastForward, "Fast-forward") }
+        if (onToggleOverlay != null) IconButton(onClick = onToggleOverlay, colors = IconButtonDefaults.iconButtonColors(
+            contentColor = if (overlayOpen) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.6f),
+        )) { Icon(Icons.Default.QueryStats, "Battle info") }
+        if (onPeekTouch != null) IconButton(onClick = onPeekTouch, colors = IconButtonDefaults.iconButtonColors(
+            contentColor = if (peekingTouch) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.6f),
+        )) { Icon(Icons.Default.TouchApp, if (peekingTouch) "Back to the top screen" else "Show the touch screen") }
         IconButton(onClick = onOpenMenu) { Icon(Icons.Default.Menu, "Menu", tint = Color.White.copy(alpha = 0.6f)) }
     }
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         if (landscape) {
-            GameSurface(onSurface, Modifier.align(Alignment.Center).fillMaxHeight())
-            Gamepad(PadLayouts.landscape, opacity = 0.8f, onButtons = onButtons)
-            Row(Modifier.align(Alignment.TopCenter)) { toolButtons() }
-        } else {
+            val custom = landscapeCustom
+            // The game view stays in the middle strip between the buttons: a SurfaceView is drawn
+            // above other views, so anything overlapping it would hide the controls.
+            Gamepad(
+                custom.applyTo(landscapePad), opacity = 0.8f, onButtons = onButtons,
+                editing = editing, onMove = { id, x, y -> onCustom(true, custom.moved(id, x, y)) },
+            )
+            val area = Modifier.align(Alignment.Center).fillMaxHeight().fillMaxWidth(0.56f)
+            if (editing) ScreenPlaceholder(aspect, area, draggable = false)
+            else GameSurface(onSurface, aspect, area, onTouch = onTouch)
+            Row(Modifier.align(Alignment.TopCenter)) {
+                if (editing) EditBar(custom.scale, { onCustom(true, custom.copy(scale = it)) }, { onCustom(true, PadCustom()) }, onEditDone)
+                else toolButtons()
+            }
+            if (overlayOpen && !editing) overlay(Modifier.align(Alignment.TopCenter).padding(top = 48.dp).width(360.dp).heightIn(max = 280.dp))
+        } else BoxWithConstraints(Modifier.fillMaxSize()) {
+            val custom = portraitCustom
+            val maxOffset = maxHeight.value * 0.45f
             Column(Modifier.fillMaxSize()) {
-                Box(Modifier.fillMaxWidth()) {
-                    GameSurface(onSurface, Modifier.fillMaxWidth())
+                // How far down the user moved the screen.
+                Spacer(Modifier.height(custom.screenOffsetDp.coerceAtMost(maxOffset).dp))
+                // One call site, so changing the DS layout resizes the same SurfaceView instead
+                // of replacing it. Tall (DS) frames are height-limited so the controls still fit.
+                val tall = aspect < 1f
+                Box(
+                    Modifier.fillMaxWidth().then(if (tall) Modifier.fillMaxHeight(0.62f) else Modifier),
+                    contentAlignment = Alignment.TopCenter,
+                ) {
+                    val area = if (tall) Modifier.fillMaxSize() else Modifier.fillMaxWidth()
+                    if (editing) {
+                        ScreenPlaceholder(aspect, area, draggable = true) { dy ->
+                            onCustom(false, custom.copy(screenOffsetDp = (custom.screenOffsetDp + dy).coerceIn(0f, maxOffset)))
+                        }
+                    } else {
+                        GameSurface(onSurface, aspect, area, onTouch = onTouch)
+                    }
                 }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) { toolButtons() }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                    if (editing) EditBar(custom.scale, { onCustom(false, custom.copy(scale = it)) }, { onCustom(false, PadCustom()) }, onEditDone)
+                    else toolButtons()
+                }
+                if (overlayOpen && !editing) overlay(Modifier.fillMaxWidth().padding(horizontal = 8.dp).heightIn(max = 260.dp))
                 Box(Modifier.fillMaxWidth().weight(1f)) {
-                    Gamepad(PadLayouts.portrait, opacity = 1f, onButtons = onButtons)
+                    Gamepad(
+                        custom.applyTo(portraitPad), opacity = 1f, onButtons = onButtons,
+                        editing = editing, onMove = { id, x, y -> onCustom(false, custom.moved(id, x, y)) },
+                    )
                 }
             }
         }
+    }
+}
+
+/** Stands in for the game screen while editing the layout (the real one would draw over the edit bar). */
+@Composable
+private fun ScreenPlaceholder(aspect: Float, modifier: Modifier, draggable: Boolean, onDragDp: (Float) -> Unit = {}) =
+    BoxWithConstraints(modifier, contentAlignment = Alignment.Center) {
+        val width = when {
+            maxWidth == Dp.Infinity -> maxHeight * aspect
+            maxHeight == Dp.Infinity -> maxWidth
+            else -> minOf(maxWidth, maxHeight * aspect)
+        }
+        val density = LocalDensity.current
+        val currentOnDrag by rememberUpdatedState(onDragDp)
+        Box(
+            Modifier
+                .size(width, width / aspect)
+                .background(Color(0xFF1E2A38))
+                .border(2.dp, Color(0xFF90CAF9))
+                .then(
+                    if (draggable) Modifier.pointerInput(Unit) {
+                        detectVerticalDragGestures { change, dy ->
+                            change.consume()
+                            currentOnDrag(with(density) { dy.toDp().value })
+                        }
+                    } else Modifier,
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                if (draggable) "Game screen\nDrag it up or down.\nDrag the buttons to move them."
+                else "Game screen\nDrag the buttons to move them.",
+                color = Color.White, textAlign = TextAlign.Center,
+                modifier = Modifier.padding(16.dp),
+            )
+        }
+    }
+
+/** Replaces the tool buttons while editing: button size, back to the default layout, and done. */
+@Composable
+private fun EditBar(scale: Float, onScale: (Float) -> Unit, onReset: () -> Unit, onDone: () -> Unit) {
+    Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text("Size", color = Color.White, style = MaterialTheme.typography.labelLarge)
+        Slider(value = scale, onValueChange = onScale, valueRange = 0.6f..1.4f, modifier = Modifier.width(120.dp).padding(horizontal = 8.dp))
+        TextButton(onClick = onReset) { Text("Reset") }
+        FilledTonalButton(onClick = onDone) { Text("Done") }
     }
 }
 
@@ -112,35 +281,144 @@ fun LoadingScreen(message: String?) {
 }
 
 /** Pause menu. */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun PauseMenu(
     speed: Int,
     onSpeed: (Int) -> Unit,
     onSaveState: () -> Unit,
     onLoadState: () -> Unit,
-    onReset: () -> Unit,
     onQuit: () -> Unit,
     onDismiss: () -> Unit,
+    onCheats: () -> Unit = {},
+    onCheatSearch: () -> Unit = {},
+    onEditControls: () -> Unit = {},
+    onSetCover: () -> Unit = {},
+    /** Null hides the button (games without Pokemon tools). */
+    onChallenges: (() -> Unit)? = {},
+    /** DS only: current screen layout (null hides the picker). */
+    dsLayout: DsLayout? = null,
+    onDsLayout: (DsLayout) -> Unit = {},
+    /** Game volume 0..1, and whether it's muted (the slider keeps its level while muted). */
+    volume: Float = 1f,
+    muted: Boolean = false,
+    onVolume: (Float) -> Unit = {},
+    onMute: (Boolean) -> Unit = {},
+    /** Whether to offer the quit-time state when the game starts. */
+    /** Start games where they were last quit (off: they boot normally). */
+    autoContinue: Boolean = false,
+    onAutoContinue: (Boolean) -> Unit = {},
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Resume") } },
-        title = { Text("Paused") },
+        containerColor = PokeColors.SurfaceLow,
+        confirmButton = {},
+        title = null,
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilledTonalButton(onClick = onSaveState, Modifier.fillMaxWidth()) { Text("Save state") }
-                FilledTonalButton(onClick = onLoadState, Modifier.fillMaxWidth()) { Text("Load state") }
-                Text("Fast-forward speed", style = MaterialTheme.typography.labelLarge)
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    for (s in listOf(2, 3, 4, 8)) {
-                        FilterChip(selected = speed == s, onClick = { onSpeed(s) }, label = { Text("${s}×") })
+            // Scrolls so every item stays reachable in landscape, where the dialog is short.
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { PixelText("PAUSED", pixel = 3.dp) }
+                // The main actions, big.
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    MenuTile(Icons.Default.PlayArrow, "Resume", Modifier.weight(1f), highlight = true, onClick = onDismiss)
+                    MenuTile(Icons.Default.Save, "Save state", Modifier.weight(1f), onClick = onSaveState)
+                    MenuTile(Icons.Default.Restore, "Load state", Modifier.weight(1f), onClick = onLoadState)
+                }
+
+                MenuSection("Sound") {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = { onMute(!muted) }) {
+                            Icon(
+                                if (muted || volume == 0f) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
+                                if (muted) "Unmute" else "Mute",
+                                tint = if (muted) MaterialTheme.colorScheme.error else PokeColors.Gold,
+                            )
+                        }
+                        androidx.compose.material3.Slider(
+                            value = volume,
+                            onValueChange = { onVolume(it); if (muted) onMute(false) },
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text(if (muted) "Muted" else "${(volume * 100).toInt()}%", Modifier.width(52.dp), textAlign = TextAlign.End,
+                            style = MaterialTheme.typography.labelMedium)
                     }
                 }
-                FilledTonalButton(onClick = onReset, Modifier.fillMaxWidth()) { Text("Reset game") }
-                FilledTonalButton(onClick = onQuit, Modifier.fillMaxWidth()) { Text("Quit to library") }
+                MenuSection("Fast-forward") {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        for (s in listOf(2, 3, 4, 8)) {
+                            FilterChip(selected = speed == s, onClick = { onSpeed(s) }, label = { Text("${s}×") }, modifier = Modifier.weight(1f))
+                        }
+                    }
+                }
+                if (dsLayout != null) MenuSection("Screens") {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        for (l in DsLayout.entries) {
+                            FilterChip(selected = dsLayout == l, onClick = { onDsLayout(l) }, label = { Text(l.label) })
+                        }
+                    }
+                }
+                MenuSection("Tools") {
+                    val tools = buildList {
+                        add(Triple(Icons.Default.Code, "Cheats", onCheats))
+                        add(Triple(Icons.Default.Search, "Cheat search", onCheatSearch))
+                        if (onChallenges != null) add(Triple(Icons.Default.EmojiEvents, "Challenges", onChallenges))
+                        add(Triple(Icons.Default.Gamepad, "Controls", onEditControls))
+                        add(Triple(Icons.Default.Image, "Set as cover", onSetCover))
+                    }
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        tools.chunked(3).forEach { row ->
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                row.forEach { (icon, label, action) -> MenuTile(icon, label, Modifier.weight(1f), onClick = action) }
+                                repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
+                            }
+                        }
+                    }
+                }
+                MenuSection("Settings") {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Continue where you left off", style = MaterialTheme.typography.labelLarge)
+                            Text("Start games from where you quit them, instead of booting them", style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        androidx.compose.material3.Switch(checked = autoContinue, onCheckedChange = onAutoContinue)
+                    }
+                }
+                androidx.compose.material3.OutlinedButton(onClick = onQuit, Modifier.fillMaxWidth(),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.6f))) {
+                    Icon(Icons.AutoMirrored.Filled.ExitToApp, null, tint = MaterialTheme.colorScheme.error)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Quit to library", color = MaterialTheme.colorScheme.error)
+                }
             }
         },
     )
+}
+
+/** A titled group in the pause menu. */
+@Composable
+private fun MenuSection(title: String, content: @Composable () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(title.uppercase(), style = SectionHeadingStyle)
+        content()
+    }
+}
+
+/** A square icon-and-label button. */
+@Composable
+private fun MenuTile(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, modifier: Modifier = Modifier, highlight: Boolean = false, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(16.dp)
+    Column(
+        modifier.clip(shape)
+            .background(if (highlight) PokeColors.Red else PokeColors.Surface2)
+            .border(1.dp, if (highlight) PokeColors.Red else PokeColors.OutlineSoft, shape)
+            .clickable(onClick = onClick).padding(vertical = 12.dp, horizontal = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Icon(icon, null, tint = if (highlight) androidx.compose.ui.graphics.Color.White else PokeColors.Gold)
+        Text(label, style = MaterialTheme.typography.labelMedium, maxLines = 1, textAlign = TextAlign.Center,
+            color = if (highlight) androidx.compose.ui.graphics.Color.White else PokeColors.Text)
+    }
 }
 
 /** Lists save-state slots; [saving] picks between "save into" and "load from". */
@@ -198,13 +476,3 @@ private fun Thumbnail(file: File?) {
     }
 }
 
-@Composable
-fun ResumePrompt(onContinue: () -> Unit, onFresh: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onFresh,
-        title = { Text("Continue where you left off?") },
-        text = { Text("Load the state saved when you last quit. Choose \"Boot game\" to start from your in-game save instead.") },
-        confirmButton = { TextButton(onClick = onContinue) { Text("Continue") } },
-        dismissButton = { TextButton(onClick = onFresh) { Text("Boot game") } },
-    )
-}

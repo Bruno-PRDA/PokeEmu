@@ -9,7 +9,7 @@ internal object NativeBridge {
     }
 
     external fun nativeCreate(coreLibrary: String, systemDir: String, saveDir: String): Boolean
-    external fun nativeLoadGame(rom: ByteArray, savePath: String): Boolean
+    external fun nativeLoadGame(romPath: String, savePath: String, patchOffsets: LongArray, patchBytes: Array<ByteArray>): Boolean
     external fun nativeStart()
     external fun nativePause()
     external fun nativeResume()
@@ -17,11 +17,17 @@ internal object NativeBridge {
     external fun nativeSetSurface(surface: Surface?)
     external fun nativeSetButtons(mask: Int)
     external fun nativeSetSpeed(multiplier: Int)
+    external fun nativeSetVolume(volume: Float)
+    external fun nativeSetPointer(x: Int, y: Int, pressed: Boolean)
+    external fun nativeSetVariable(key: String, value: String)
     external fun nativeReset()
+    external fun nativeWriteBus(address: Long, data: ByteArray): Boolean
+    external fun nativeSetCheats(codes: Array<String>): Boolean
     external fun nativeSaveState(): ByteArray?
     external fun nativeLoadState(state: ByteArray): Boolean
     external fun nativeFlushSave(): Boolean
     external fun nativeSnapshot(): IntArray?
     external fun nativeReadMemory(region: Int, offset: Long, length: Int): ByteArray?
+    external fun nativeReadBus(address: Long, length: Int): ByteArray?
     external fun nativeFps(): Double
 }

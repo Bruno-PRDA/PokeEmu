@@ -25,10 +25,14 @@ public:
     // dlopen()s the core and calls retro_init().
     bool open(const std::string& libraryName, const std::string& systemDir, const std::string& saveDir,
               const Callbacks& callbacks);
-    // Loads ROM bytes (the core must not need a full path).
-    bool loadGame(const std::vector<uint8_t>& rom);
+    // Loads a ROM from memory; [path] (may be empty) is passed along for cores that use it for naming.
+    // [data] must stay valid until close().
+    bool loadGame(const void* data, size_t size, const std::string& path);
     void runFrame();
     void reset();
+    // Replaces all cheats with [codes] (each enabled). Cores apply them every frame.
+    // Returns false if the core has no cheat support.
+    bool setCheats(const std::vector<std::string>& codes);
     // Unloads the game and core.
     void close();
 
@@ -41,6 +45,13 @@ public:
 
     // Region is a RETRO_MEMORY_* id. Returns nullptr when unavailable.
     uint8_t* memoryData(unsigned region, size_t* size);
+    // Host pointer for a console bus address (from the core's memory map), with
+    // the bytes available from there in *available. nullptr if unmapped.
+    uint8_t* busAddress(uint32_t address, size_t* available);
+
+    // Core options (e.g. melonDS screen layout). Process-global so they can be set
+    // before a game loads; the core sees changes through GET_VARIABLE_UPDATE.
+    static void setVariable(const std::string& key, const std::string& value);
 
 private:
     template <typename T> bool sym(T& fn, const char* name);
@@ -62,6 +73,14 @@ private:
     Callbacks callbacks_;
     retro_pixel_format pixelFormat_ = RETRO_PIXEL_FORMAT_0RGB1555;
 
+    struct MemoryRegion {
+        uint8_t* ptr;
+        size_t offset;
+        uint32_t start;
+        size_t len;
+    };
+    std::vector<MemoryRegion> memoryMap_;
+
     void (*retro_init_)() = nullptr;
     void (*retro_deinit_)() = nullptr;
     void (*retro_set_environment_)(retro_environment_t) = nullptr;
@@ -77,6 +96,8 @@ private:
     void (*retro_unload_game_)() = nullptr;
     void (*retro_run_)() = nullptr;
     void (*retro_reset_)() = nullptr;
+    void (*retro_cheat_reset_)() = nullptr;
+    void (*retro_cheat_set_)(unsigned, bool, const char*) = nullptr;
     size_t (*retro_serialize_size_)() = nullptr;
     bool (*retro_serialize_)(void*, size_t) = nullptr;
     bool (*retro_unserialize_)(const void*, size_t) = nullptr;

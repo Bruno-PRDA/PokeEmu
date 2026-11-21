@@ -12,14 +12,26 @@ android {
         applicationId = "com.pokeemu.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
-        ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
+        versionCode = 18
+        versionName = "0.11.0"
+        // CPU types are chosen by the ABI splits below.
     }
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // Shrinks the app code (mostly unused Compose/icon classes) by tens of MB.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.getByName("debug")
+        }
+    }
+    // One APK per CPU type: arm64 for phones, x86_64 for the emulator.
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "x86_64")
+            isUniversalApk = false
         }
     }
     compileOptions {
@@ -32,8 +44,13 @@ android {
 }
 
 dependencies {
+    testImplementation(kotlin("test"))
+    testImplementation("junit:junit:4.13.2")
     implementation(project(":core-host"))
     implementation(project(":saves"))
+    implementation(project(":pokemon-gen3"))
+    implementation(project(":pokemon-gen4"))
+    implementation(project(":pokemon-gen5"))
 
     implementation(platform("androidx.compose:compose-bom:2024.12.01"))
     implementation("androidx.compose.ui:ui")
